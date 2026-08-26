@@ -1,0 +1,32 @@
+# Danh sách nguồn crawl. Mỗi source: name (tên thư mục output) + type + tham số.
+# delay_s: giây nghỉ giữa 2 lượt tải (lịch sự với server, mặc định 2.0)
+
+sources:
+  # ---- Internet Archive: an toàn nhất, tải hàng loạt hợp pháp ----
+  - name: uyen-uong-dao
+    type: archive_org
+    identifier: Uynngaowww.truyenaudio.net
+
+  # ---- Podcast RSS: mỗi episode một file mp3 ----
+  # (điền RSS feed thật; tìm feed của podcast qua trang podcast hoặc podcastindex.org)
+  # - name: podcast-vi-du
+  #   type: rss
+  #   url: https://feeds.example.com/ten-podcast.xml
+  #   max_items: 100
+  #   delay_s: 2.0
+
+  # ---- YouTube channel/playlist (cần: pip install yt-dlp) ----
+  # - name: kenh-youtube-vi-du
+  #   type: youtube
+  #   url: https://www.youtube.com/@tenkenh/videos
+  #   max_items: 50
+  #   audio_format: m4a
+
+  # ---- Trang HTML có link mp3 trực tiếp ----
+  # - name: trang-sach-noi-vi-du
+  #   type: html
+  #   start_urls:
+  #     - https://example.com/the-loai/truyen-dai/page/{page}
+  #   page_count: 3
+  #   follow_detail: true    # quét thêm 1 cấp trang con
+  #   delay_s: 3.0
