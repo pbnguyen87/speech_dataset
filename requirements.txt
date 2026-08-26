@@ -1,4 +1,2 @@
 requests
 pyyaml
-# tùy chọn:
-# yt-dlp        # nguồn type: youtube

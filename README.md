@@ -1,17 +1,16 @@
 # audio-crawler
 
-Bộ thu thập audio tiếng Việt (sách nói, truyện audio, podcast, YouTube) làm
+Bộ thu thập audio tiếng Việt (sách nói, truyện audio, podcast) làm
 đầu vào cho [audio-pipeline](https://github.com/pbnguyen87/audio-pipeline).
 Output là thư mục audio thô + **sidecar `.json` metadata** cạnh mỗi file —
 đúng format mà stage s0 của pipeline tự nhận và giữ suốt các bước xử lý.
 
-## Nguồn hỗ trợ (4 adapter)
+## Nguồn hỗ trợ (3 adapter)
 
 | type | Dùng cho | Ghi chú |
 |---|---|---|
 | `archive_org` | Item trên Internet Archive | An toàn nhất, tải hàng loạt qua metadata API, chỉ lấy file `original` |
 | `rss` | Podcast (RSS feed công khai) | Mỗi episode một enclosure mp3 — không cần scrape HTML |
-| `youtube` | Channel / playlist / video | Qua `yt-dlp` (tự resume bằng download-archive), giữ m4a gốc không re-encode |
 | `html` | Trang danh sách có link mp3 trực tiếp | Tổng quát: quét trang (hỗ trợ `{page}`), nhặt href khớp regex, tùy chọn quét thêm 1 cấp trang con |
 
 Trang phức tạp (link ẩn sau player/javascript) cần viết adapter riêng trong
@@ -23,7 +22,6 @@ Trang phức tạp (link ẩn sau player/javascript) cần viết adapter riêng
 ```bash
 python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
-# nếu dùng nguồn youtube: pip install yt-dlp  (+ ffmpeg trong PATH)
 ```
 
 ## Chạy
@@ -61,7 +59,6 @@ python -m pipeline run --raw-dir ../audio-crawler/raw/uyen-uong-dao --workdir wo
 
 - **Resume/dedup**: mỗi thư mục nguồn có `ledger.jsonl` (append + flush từng
   dòng) — ngắt giữa chừng chạy lại là tiếp tục; url đã tải không tải lại.
-  Nguồn youtube dùng cơ chế tương đương của yt-dlp (`ytdlp_archive.txt`).
 - **Lịch sự với server**: nghỉ `delay_s` giây giữa 2 lượt tải (mặc định 2s,
   chỉnh riêng từng nguồn), retry 3 lần với backoff, User-Agent tự nhận diện.
 - **Tải an toàn**: stream về file `.part`, thành công mới đổi tên — không bao

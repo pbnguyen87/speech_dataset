@@ -15,13 +15,6 @@ sources:
   #   max_items: 100
   #   delay_s: 2.0
 
-  # ---- YouTube channel/playlist (cần: pip install yt-dlp) ----
-  # - name: kenh-youtube-vi-du
-  #   type: youtube
-  #   url: https://www.youtube.com/@tenkenh/videos
-  #   max_items: 50
-  #   audio_format: m4a
-
   # ---- Trang HTML có link mp3 trực tiếp ----
   # - name: trang-sach-noi-vi-du
   #   type: html

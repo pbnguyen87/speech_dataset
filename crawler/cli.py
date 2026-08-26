@@ -11,7 +11,7 @@ import yaml
 
 from . import downloader
 from .state import Ledger
-from .sources import archive_org, html_listing, rss, youtube
+from .sources import archive_org, html_listing, rss
 
 LIST_SOURCES = {"rss": rss, "archive_org": archive_org, "html": html_listing}
 
@@ -22,13 +22,8 @@ def crawl_source(cfg: dict, out_root: str, limit: int | None) -> None:
     delay = float(cfg.get("delay_s", 2.0))
     print(f"[{name}] type={stype}")
 
-    if stype == "youtube":
-        n = youtube.crawl(cfg, out_dir, delay, limit)
-        print(f"[{name}] xong: {n} file audio trong {out_dir}")
-        return
-
     if stype not in LIST_SOURCES:
-        raise SystemExit(f"Không hỗ trợ type '{stype}' (rss|archive_org|html|youtube)")
+        raise SystemExit(f"Không hỗ trợ type '{stype}' (rss|archive_org|html)")
 
     items = LIST_SOURCES[stype].list_items(cfg)
     if limit:
