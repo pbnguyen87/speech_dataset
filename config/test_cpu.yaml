@@ -1,0 +1,7 @@
+# Override cho lần chạy thử trên CPU: model nhỏ, thời gian chạy hợp lý.
+# Chạy thật trên GPU thì bỏ file này để dùng large-v3 + PhoWhisper-large.
+transcribe:
+  primary:
+    model: small
+  verify:
+    model: vinai/PhoWhisper-small

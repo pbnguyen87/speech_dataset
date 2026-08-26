@@ -1,0 +1,24 @@
+# Core — pipeline chạy được trọn trên CPU với bộ này
+# LƯU Ý Mac Intel (x86_64): torch bỏ hỗ trợ macOS Intel từ 2.3 — cần Python <=3.12 và:
+#   pip install "torch==2.2.2" "torchaudio==2.2.2" "numpy<2" "scipy==1.13.1" \
+#               "scikit-learn<1.6" "transformers==4.46.3" "speechbrain==1.0.2"
+#   (numpy/scipy mới đòi numpy>=2 xung đột torch 2.2; transformers>=5 đòi torch>=2.5;
+#    speechbrain>=1.0.3 dùng torch.amp.custom_fwd cần torch>=2.4)
+# Nếu Python thiếu CA cert (python.org build): export SSL_CERT_FILE=$(python -m certifi)
+pyyaml
+numpy
+soundfile
+pyarrow
+pandas
+scikit-learn
+torch
+torchaudio
+silero-vad
+demucs==4.0.1   # bản mới hơn kéo theo sphn (cần Rust toolchain để build)
+faster-whisper
+transformers
+speechbrain
+# tùy chọn nhưng khuyến nghị:
+# vinorm            # chuẩn hóa văn bản tiếng Việt (s6); thiếu thì fallback basic
+# onnxruntime       # chấm điểm DNSMOS (s3); thiếu thì dùng SNR
+# pyannote.audio    # diarization đầy đủ (s4 backend pyannote, cần HF token)

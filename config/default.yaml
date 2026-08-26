@@ -1,0 +1,80 @@
+# Cấu hình mặc định cho pipeline làm sạch audio.
+# Mọi tham số đều có thể override bằng file yaml khác: --config my_config.yaml
+
+device: auto            # auto | cpu | cuda | mps
+
+ingest:
+  extensions: [".mp3", ".m4a", ".wav", ".flac", ".ogg", ".opus", ".aac", ".wma"]
+  target_sr: 24000      # sample rate chuẩn của toàn pipeline
+
+separate:               # s1: tách nhạc nền bằng demucs
+  enabled: auto         # true = luôn chạy | false = bỏ qua | auto = dò nhạc trên mẫu 30s rồi quyết định
+  model: htdemucs
+  auto_sample_seconds: 30
+  auto_music_ratio: 0.10   # RMS(nhạc nền)/RMS(tổng) vượt ngưỡng này -> chạy demucs full
+
+segment:                # s2: VAD + cắt đoạn
+  vad_sr: 16000
+  min_seconds: 1.0
+  max_seconds: 13.0
+  min_silence_ms: 300
+  speech_pad_ms: 100
+
+quality:                # s3: đo chỉ số chất lượng (không lọc, chỉ ghi)
+  clipping_threshold: 0.999
+  dnsmos:
+    enabled: auto       # true | false | auto (chạy nếu cài onnxruntime + có model)
+    model_path: null    # đường dẫn sig_bak_ovr.onnx của DNSMOS P.835 (tự tải từ repo microsoft/DNS-Challenge)
+
+speaker:                # s4: gán speaker id + phát hiện đa người nói
+  backend: ecapa        # ecapa | pyannote | off
+  cluster_threshold: 0.35        # ngưỡng khoảng cách cosine khi gom cụm speaker trong 1 file nguồn
+  multi_speaker_threshold: 0.45  # khoảng cách embedding nửa đầu/nửa sau segment vượt ngưỡng -> flag đa người nói
+  pyannote_model: pyannote/speaker-diarization-3.1  # cần HF token (model gated)
+
+transcribe:             # s5: bước tốn nhất
+  primary:
+    model: large-v3     # tên model faster-whisper: large-v3 | medium | small ...
+    compute_type: auto  # auto -> float16 trên cuda, int8 trên cpu
+    language: vi
+    beam_size: 5
+  verify:
+    enabled: true
+    model: vinai/PhoWhisper-large
+    batch_size: 8
+
+textnorm:               # s6
+  backend: auto         # vinorm | basic | auto (vinorm nếu cài được, fallback basic)
+
+loudnorm:               # s7
+  mode: lufs            # lufs (ffmpeg loudnorm) | peak (scale theo đỉnh) | off
+  target_lufs: -23.0
+  peak_dbfs: -3.0
+
+package:                # s8: gán tier + xuất dataset
+  tiers:                # xét theo thứ tự A rồi B; không đạt -> C (loại)
+    A:                  # TTS-grade
+      max_cer: 0.02
+      min_snr_db: 20.0
+      min_dnsmos: 3.0   # chỉ xét khi có điểm dnsmos; không có thì dùng snr
+      max_clipping: 0.001
+      min_seconds: 2.0
+      max_seconds: 13.0
+      allow_multi_speaker: false
+    B:                  # ASR-grade
+      max_cer: 0.15
+      min_snr_db: 10.0
+      min_dnsmos: 2.5
+      max_clipping: 0.01
+      min_seconds: 1.0
+      max_seconds: 30.0
+      allow_multi_speaker: true
+  keep_tiers: null      # null = xuất mọi tier trừ C; hoặc danh sách, vd [A] chỉ xuất tier A
+                        # (tier vẫn được gán đầy đủ trong manifest, chỉ lọc lúc xuất dataset)
+  split:                # chia train/val/test THEO SPEAKER để tránh leak
+    val_ratio: 0.02
+    test_ratio: 0.02
+    seed: 42
+  parquet:
+    enabled: true
+    shard_max_mb: 500

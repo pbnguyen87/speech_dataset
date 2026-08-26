@@ -1,0 +1,3 @@
+# Cài thêm khi có GPU NVIDIA (sau khi cài requirements.txt)
+# torch bản CUDA: xem https://pytorch.org/get-started/locally/
+onnxruntime-gpu
