@@ -1,0 +1,14 @@
+# môi trường
+.venv/
+__pycache__/
+*.pyc
+.DS_Store
+
+# dữ liệu: audio tải về, workdir pipeline, dataset tải từ HF — không đưa lên repo
+vi_podcast/
+data/
+raw/
+raw_*/
+work/
+work_*/
+pretrained_models/
