@@ -9,11 +9,13 @@ import os
 
 import yaml
 
-from . import downloader
+from . import downloader, sources
 from .state import Ledger
-from .sources import archive_org, html_listing, rss
 
-LIST_SOURCES = {"rss": rss, "archive_org": archive_org, "html": html_listing}
+
+def needs_probe(known_duration: float | None, max_seconds: float) -> bool:
+    """Bỏ qua ffprobe khi nguồn đã khai thời lượng và nó dưới ngưỡng cắt."""
+    return known_duration is None or known_duration > max_seconds
 
 
 def crawl_source(cfg: dict, out_root: str, limit: int | None) -> None:
@@ -22,14 +24,22 @@ def crawl_source(cfg: dict, out_root: str, limit: int | None) -> None:
     delay = float(cfg.get("delay_s", 2.0))
     print(f"[{name}] type={stype}")
 
-    if stype not in LIST_SOURCES:
-        raise SystemExit(f"Không hỗ trợ type '{stype}' (rss|archive_org|html)")
+    try:
+        adapter = sources.get(stype)
+    except KeyError as e:
+        raise SystemExit(e.args[0])
 
-    items = LIST_SOURCES[stype].list_items(cfg)
+    if hasattr(adapter, "crawl"):  # adapter tự tải (youtube/yt-dlp)
+        got = adapter.crawl(cfg, out_dir, delay, limit)
+        print(f"[{name}] xong: {got} file mới trong {out_dir}")
+        return
+
+    items = adapter.list_items(cfg)
     if limit:
         items = items[:limit]
     print(f"[{name}] {len(items)} item")
 
+    max_seconds = float(cfg["max_hours"]) * 3600 if cfg.get("max_hours") else None
     os.makedirs(out_dir, exist_ok=True)
     got = 0
     with Ledger(out_dir) as ledger:
@@ -37,16 +47,27 @@ def crawl_source(cfg: dict, out_root: str, limit: int | None) -> None:
             key = item.get("key", item["url"])  # key ổn định nếu adapter cung cấp
             if ledger.has(key):
                 continue
+            ext, extra = downloader.ext_from_url(item["url"]), {}
+            trim = False
+            if max_seconds and needs_probe(item.get("duration"), max_seconds):
+                # ffprobe chỉ khi feed không khai thời lượng hoặc khai vượt ngưỡng
+                info = downloader.probe(item["url"])
+                if info and info["duration"] > max_seconds:
+                    trim, ext = True, info["ext"]
+                    extra = {"duration_original": round(info["duration"], 1),
+                             "truncated_to_seconds": int(max_seconds)}
             base = downloader.safe_filename(item["title"])
-            dest = os.path.join(out_dir, base + downloader.ext_from_url(item["url"]))
+            dest = os.path.join(out_dir, base + ext)
             if os.path.exists(dest):  # tên trùng nhưng url khác -> thêm hậu tố
-                dest = os.path.join(
-                    out_dir, f"{base}_{i:04d}" + downloader.ext_from_url(item["url"]))
-            print(f"  [{i + 1}/{len(items)}] {item['title'][:60]}")
-            if downloader.download(item["url"], dest, delay_s=delay):
+                dest = os.path.join(out_dir, f"{base}_{i:04d}" + ext)
+            note = f" (cắt {max_seconds / 3600:g}h / {extra['duration_original'] / 3600:.1f}h)" if trim else ""
+            print(f"  [{i + 1}/{len(items)}] {item['title'][:60]}{note}")
+            ok = (downloader.download_trimmed(item["url"], dest, max_seconds, delay_s=delay) if trim
+                  else downloader.download(item["url"], dest, delay_s=delay))
+            if ok:
                 downloader.write_sidecar(dest, {
                     "title": item["title"], "url": item["url"],
-                    "source": name, **item.get("meta", {}),
+                    "source": name, **item.get("meta", {}), **extra,
                 })
                 ledger.add(key, dest, name)
                 got += 1
@@ -66,6 +87,9 @@ def main(argv=None):
 
     with open(args.config, encoding="utf-8") as f:
         sources = yaml.safe_load(f)["sources"]
+    config_dir = os.path.dirname(os.path.abspath(args.config))
+    for s in sources:
+        s["_config_dir"] = config_dir  # để *_file tính tương đối theo file config
     if args.source:
         sources = [s for s in sources if s["name"] == args.source]
         if not sources:
