@@ -1,0 +1,12 @@
+# môi trường
+.venv/
+__pycache__/
+*.pyc
+.DS_Store
+
+# dữ liệu test / thư mục làm việc (không đưa audio lên repo)
+raw_*/
+work_*/
+
+# cache model
+pretrained_models/

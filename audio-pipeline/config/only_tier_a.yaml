@@ -1,0 +1,5 @@
+# Override: chỉ xuất tier A (TTS-grade) ở bước s8.
+# Dùng: python -m pipeline run --workdir work \
+#         --config config/default.yaml --config config/only_tier_a.yaml --stages s8
+package:
+  keep_tiers: [A]
