@@ -12,3 +12,6 @@ raw_*/
 work/
 work_*/
 pretrained_models/
+
+# file tạm của Claude Code
+.claude/scheduled_tasks.lock
