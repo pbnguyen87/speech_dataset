@@ -1,0 +1,5 @@
+# Mỗi dòng một trang danh sách có link mp3 trực tiếp. Dòng '#' bị bỏ.
+# Hỗ trợ {page}: thay bằng 1..page_count khai báo trong sources.yaml.
+# Dùng trong sources.yaml:  start_urls_file: html_pages.example.txt
+https://example.com/the-loai/truyen-dai/page/{page}
+https://example.com/the-loai/kiem-hiep

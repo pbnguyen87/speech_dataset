@@ -1,0 +1,4 @@
+# Mỗi dòng một item Internet Archive: identifier trần hoặc url /details/. Dòng '#' bị bỏ.
+# Dùng trong sources.yaml:  identifiers_file: archive_items.example.txt
+Uynngaowww.truyenaudio.net
+https://archive.org/details/Uynngaowww.truyenaudio.net

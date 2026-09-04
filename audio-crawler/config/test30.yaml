@@ -1,0 +1,17 @@
+# Chạy thử ~30 phút audio từ 3 kênh khác thể loại, mỗi kênh 1 tập cắt 10 phút đầu.
+sources:
+  - name: truyen-suu-tam          # đọc truyện tiên hiệp, 1 giọng/tập, có nhạc nền nhẹ
+    type: rss
+    url: https://anchor.fm/s/ccc8a36c/podcast/rss
+    max_hours: 0.1667
+    delay_s: 0.5
+  - name: tri-ky-cam-xuc          # talk 1 người, phát triển bản thân
+    type: rss
+    url: https://feeds.soundcloud.com/users/soundcloud:users:174938737/sounds.rss
+    max_hours: 0.1667
+    delay_s: 0.5
+  - name: phap-thoai-thich-phap-hoa   # giảng pháp, 1 giọng, có tiếng vỗ tay/hội trường
+    type: rss
+    url: https://anchor.fm/s/105a11d04/podcast/rss
+    max_hours: 0.1667
+    delay_s: 0.5

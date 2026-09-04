@@ -1,0 +1,10 @@
+# Crawl toàn bộ podcast tiếng Việt trong podcast_feeds_2h.txt (1694 feed, >= 2 giờ mỗi kênh).
+# Chạy:  python tools/crawl_and_process.py --config config/vi_podcast.yaml \
+#            --out /Users/binhnguyen8/Downloads/study/speech_dataset/vi_podcast/raw \
+#            --workdir /Users/binhnguyen8/Downloads/study/speech_dataset/vi_podcast/work --batch 20
+sources:
+  - name: vi-podcast
+    type: rss
+    urls_file: podcast_feeds_2h.txt   # tương đối theo thư mục config/
+    max_hours: 10                     # tập dài hơn 10h chỉ lấy 10h đầu (kênh truyện gộp 30-40h/tập)
+    delay_s: 1.0                      # 1694 feed trên nhiều host khác nhau, 1s là đủ lịch sự
