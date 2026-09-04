@@ -1,0 +1,5 @@
+# Mỗi dòng một RSS feed podcast (url file xml). Dòng '#' bị bỏ.
+# Dùng trong sources.yaml:  urls_file: rss_feeds.example.txt
+# Tìm feed qua trang podcast hoặc podcastindex.org
+https://feeds.example.com/podcast-a.xml
+https://feeds.example.com/podcast-b.xml
