@@ -1,2 +1,4 @@
 requests
 pyyaml
+# tùy chọn:
+# yt-dlp        # nguồn type: youtube (+ ffmpeg trong PATH)
