@@ -186,6 +186,10 @@ tách nhầm 1 người thành 2 id còn hơn gộp nhầm 2 người làm 1.
 - `off` — `speaker_id = file_id`, `multi_speaker = null`; dùng khi biết chắc
   nguồn một giọng và muốn nhanh.
 
+**Resume:** theo *file nguồn* — chỉ file còn segment chưa có trong manifest mới
+được embedding + cluster lại; file đã xong không đọc lại audio (nên xóa wav
+s2 của file đã qua s4 là an toàn).
+
 **Ghi ra manifest:** `speaker_id`, `multi_speaker` (không tạo audio mới).
 s8 dùng `multi_speaker` trong rule tier và hash `speaker_id` để chia split.
 

@@ -65,7 +65,16 @@ def run(cfg: dict, workdir: str, limit: int | None = None) -> str:
         return _run_pyannote(cfg, records, mpath, dev)
 
     # --- backend ecapa ---
-    print(f"[{STAGE}] ecapa device={dev}, {len(records)} segment")
+    # Resume theo file nguồn: cluster cần đủ mọi segment của một file, nên chỉ xử lý
+    # các file còn segment chưa có trong manifest; file đã xong bỏ qua hoàn toàn
+    # (không đọc lại audio -> chạy theo lô + xóa wav trung gian của lô trước vẫn ổn).
+    done = manifest.done_ids(mpath)
+    pending_files = {r["file_id"] for r in records if r["id"] not in done}
+    records = [r for r in records if r["file_id"] in pending_files]
+    print(f"[{STAGE}] ecapa device={dev}, {len(records)} segment / {len(pending_files)} file cần xử lý")
+    if not records:
+        print(f"[{STAGE}] xong (không có gì mới)")
+        return mpath
     enc = EcapaBackend(dev)
     ms_thr = scfg["multi_speaker_threshold"]
 
