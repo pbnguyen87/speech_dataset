@@ -64,7 +64,8 @@ def stage_batch(records: list[dict], workdir: str) -> str:
     os.makedirs(stage_dir, exist_ok=True)
     for rec in records:
         base, ext = os.path.splitext(os.path.basename(rec["path"]))
-        name = f"{rec['source']}__{base}"  # tránh trùng tên giữa các nguồn
+        # tránh trùng tên giữa các nguồn / giữa các feed trong cùng nguồn (rss: subdir = feed)
+        name = "__".join(x for x in (rec["source"], rec.get("subdir"), base) if x)
         os.symlink(rec["path"], os.path.join(stage_dir, name + ext))
         sidecar = os.path.join(os.path.dirname(rec["path"]), base + ".json")
         if os.path.exists(sidecar):

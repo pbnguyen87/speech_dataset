@@ -253,3 +253,25 @@ class TestCrawlSourceTrim:
         monkeypatch.setattr(srcs, "get", lambda t: type("A", (), {"list_items": staticmethod(lambda cfg: [])}))
         with pytest.raises(SystemExit, match="ffmpeg"):
             cli.crawl_source({"name": "t", "type": "x", "max_hours": 0.1}, str(tmp_path), None)
+
+
+class TestFeedSubdir:
+    """rss: mỗi feed một thư mục con raw/<source>/<feed_slug>/."""
+
+    def test_feed_slug(self):
+        from crawler.sources.rss.adapter import feed_slug
+        assert feed_slug("https://vnexpress.net/rss/podcast/ban-on-khong.rss") == "vnexpress.net_rss_podcast_ban-on-khong.rss"
+        assert feed_slug("https://anchor.fm/s/ccc8a36c/podcast/rss") == "anchor.fm_s_ccc8a36c_podcast_rss"
+        assert feed_slug("https://x.com/") == "x.com"
+
+    def test_cli_puts_file_in_subdir(self, monkeypatch, tmp_path):
+        from crawler import cli, sources as srcs
+        monkeypatch.setattr(srcs, "get", lambda t: type("A", (), {"list_items": staticmethod(
+            lambda cfg: [{"url": "https://x/a.mp3", "title": "a", "subdir": "feed1"}])}))
+        monkeypatch.setattr(downloader, "download", lambda url, dest, **k: open(dest, "wb").close() or True)
+        cli.crawl_source({"name": "src", "type": "x", "delay_s": 0}, str(tmp_path), None)
+        assert (tmp_path / "src" / "feed1" / "a.mp3").exists()
+        assert (tmp_path / "src" / "feed1" / "a.json").exists()
+        rec = [l for l in (tmp_path / "src" / "ledger.jsonl").read_text().splitlines() if l][0]
+        import json
+        assert json.loads(rec)["subdir"] == "feed1"

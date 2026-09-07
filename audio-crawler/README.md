@@ -85,9 +85,10 @@ Output:
 ```
 raw/
 └── <tên source>/
-    ├── Tập_1_xxx.mp3
-    ├── Tập_1_xxx.json     # sidecar: title, url, source, metadata riêng của nguồn
-    ├── ...
+    ├── <feed>/            # nguồn rss: mỗi feed một thư mục (host_path của url feed)
+    │   ├── Tập_1_xxx.mp3
+    │   └── Tập_1_xxx.json # sidecar: title, url, source, metadata riêng của nguồn
+    ├── ...                # nguồn khác (html/archive/youtube): file nằm thẳng ở đây
     └── ledger.jsonl       # mọi url đã tải — chạy lại tự bỏ qua (resume/dedup)
 ```
 

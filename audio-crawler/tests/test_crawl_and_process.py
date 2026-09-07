@@ -55,6 +55,16 @@ class TestStaging:
         assert os.path.islink(os.path.join(d, "kenh__Tập_1.m4a"))
         assert open(os.path.join(d, "kenh__Tập_1.m4a"), "rb").read() == b"x"
 
+    def test_subdir_in_staging_name(self, tmp_path):
+        # 2 feed cùng nguồn, cùng tên tập -> tên staging khác nhau nhờ subdir
+        recs = []
+        for feed in ("feedA", "feedB"):
+            d = tmp_path / "raw" / "kenh" / feed; d.mkdir(parents=True)
+            (d / "Tập_1.mp3").write_bytes(b"x")
+            recs.append({"path": str(d / "Tập_1.mp3"), "source": "kenh", "subdir": feed})
+        names = sorted(os.listdir(cap.stage_batch(recs, str(tmp_path / "work"))))
+        assert names == ["kenh__feedA__Tập_1.mp3", "kenh__feedB__Tập_1.mp3"]
+
     def test_processed_resume(self, tmp_path):
         p = cap.Processed(str(tmp_path / "work"))
         p.add([{"path": "/a.mp3", "source": "s", "key": "k"}])

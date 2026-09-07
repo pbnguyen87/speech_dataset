@@ -1,6 +1,6 @@
 """CLI: python -m crawler run --config config/sources.yaml --out ./raw [--source X] [--limit N]
 
-Output: raw/<source_name>/*.mp3 + sidecar .json — đưa thẳng vào audio-pipeline:
+Output: raw/<source_name>/[<feed>/]*.mp3 + sidecar .json — đưa thẳng vào audio-pipeline:
   python -m pipeline run --raw-dir raw/<source_name> --workdir work
 """
 
@@ -68,9 +68,12 @@ def crawl_source(cfg: dict, out_root: str, limit: int | None) -> None:
                     if info["duration"] != float("inf"):
                         extra["duration_original"] = round(info["duration"], 1)
             base = downloader.safe_filename(item["title"])
-            dest = os.path.join(out_dir, base + ext)
+            subdir = item.get("subdir")  # rss: mỗi feed một thư mục con
+            dest_dir = os.path.join(out_dir, subdir) if subdir else out_dir
+            os.makedirs(dest_dir, exist_ok=True)
+            dest = os.path.join(dest_dir, base + ext)
             if os.path.exists(dest):  # tên trùng nhưng url khác -> thêm hậu tố
-                dest = os.path.join(out_dir, f"{base}_{i:04d}" + ext)
+                dest = os.path.join(dest_dir, f"{base}_{i:04d}" + ext)
             note = ""
             if trim:
                 orig = f"{extra['duration_original'] / 3600:.1f}h" if "duration_original" in extra else "?h"
@@ -83,7 +86,7 @@ def crawl_source(cfg: dict, out_root: str, limit: int | None) -> None:
                     "title": item["title"], "url": item["url"],
                     "source": name, **item.get("meta", {}), **extra,
                 })
-                ledger.add(key, dest, name)
+                ledger.add(key, dest, name, subdir)
                 got += 1
     print(f"[{name}] xong: {got} file mới trong {out_dir}")
 

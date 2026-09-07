@@ -129,8 +129,9 @@ crawler, `processed_files.jsonl` của script, manifest của pipeline) bỏ qua
 $OUT/
 ├── raw/vi-podcast/
 │   ├── ledger.jsonl          # mọi url đã tải (resume) — KHÔNG xóa
-│   ├── *.json                # sidecar metadata (giữ lại sau cleanup)
-│   └── *.mp3 / *.m4a         # audio gốc, chỉ tồn tại đến khi lô xử lý xong
+│   └── <feed>/               # mỗi feed một thư mục, tên = host_path của url feed
+│       ├── *.json            # sidecar metadata (giữ lại sau cleanup)
+│       └── *.mp3 / *.m4a     # audio gốc, chỉ tồn tại đến khi lô xử lý xong
 ├── work/
 │   ├── processed_files.jsonl # file đã qua pipeline (resume)
 │   ├── s0_ingest ... s7_loudnorm/manifest.jsonl   # metadata từng stage

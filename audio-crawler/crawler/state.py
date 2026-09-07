@@ -1,7 +1,7 @@
 """Ledger JSONL: ghi lại mọi URL đã tải để resume và khử trùng lặp.
 
 Mỗi thư mục output có một `ledger.jsonl`; mỗi dòng một record
-{"id", "url", "path", "source"}. Ghi append + flush ngay (giống manifest
+{"id", "key", "path", "source", "subdir"?}. Ghi append + flush ngay (giống manifest
 của audio-pipeline) — ngắt giữa chừng chạy lại là bỏ qua phần đã tải.
 """
 
@@ -30,8 +30,10 @@ class Ledger:
     def has(self, key: str) -> bool:
         return url_id(key) in self.done
 
-    def add(self, key: str, path: str, source: str) -> None:
+    def add(self, key: str, path: str, source: str, subdir: str | None = None) -> None:
         rec = {"id": url_id(key), "key": key, "path": path, "source": source}
+        if subdir:
+            rec["subdir"] = subdir
         self._fh.write(json.dumps(rec, ensure_ascii=False) + "\n")
         self._fh.flush()
         self.done.add(rec["id"])

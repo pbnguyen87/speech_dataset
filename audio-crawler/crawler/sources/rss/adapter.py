@@ -4,11 +4,12 @@ Cách khai báo config: xem README.md cùng thư mục.
 """
 
 import xml.etree.ElementTree as ET
+from urllib.parse import urlparse
 
 import requests
 
 from ... import targets
-from ...downloader import USER_AGENT
+from ...downloader import USER_AGENT, safe_filename
 
 
 NS = {"itunes": "http://www.itunes.com/dtds/podcast-1.0.dtd"}
@@ -46,8 +47,15 @@ def parse_feed(xml_text: str) -> list[dict]:
     return items
 
 
+def feed_slug(feed_url: str) -> str:
+    """URL feed -> tên thư mục con ổn định: 'vnexpress.net_rss_podcast_ban-on-khong.rss'."""
+    u = urlparse(feed_url)
+    return safe_filename(u.netloc + u.path.rstrip("/"), max_len=80) or "feed"
+
+
 def list_items(cfg: dict) -> list[dict]:
-    """Trả danh sách item chuẩn: {'url', 'title', 'meta'}. max_items áp cho từng feed."""
+    """Trả danh sách item chuẩn: {'url', 'title', 'subdir', 'meta'}. max_items áp cho từng feed.
+    subdir = feed_slug(feed): cli xếp audio vào raw/<source>/<subdir>/ (mỗi feed một thư mục)."""
     items = []
     for feed_url in targets.resolve(cfg, "url"):  # url | urls | urls_file
         try:
@@ -62,6 +70,7 @@ def list_items(cfg: dict) -> list[dict]:
         items += [{
             "url": e["audio_url"],
             "title": e["title"],
+            "subdir": feed_slug(feed_url),
             "duration": e["duration"],  # giây theo feed khai báo; cli dùng để bỏ qua ffprobe
             "meta": {"pub_date": e["pub_date"], "description": e["description"],
                      "duration_feed": e["duration"], "feed": feed_url},
