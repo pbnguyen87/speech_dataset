@@ -11,8 +11,8 @@ soundfile
 pyarrow
 pandas
 scikit-learn
-torch
-torchaudio
+torch<2.9
+torchaudio<2.9   # 2.9+ bỏ torchaudio.save (đòi torchcodec) -> demucs 4.0.1 lỗi
 silero-vad
 demucs==4.0.1   # bản mới hơn kéo theo sphn (cần Rust toolchain để build)
 faster-whisper

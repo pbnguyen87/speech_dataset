@@ -1,3 +1,5 @@
 # Cài thêm khi có GPU NVIDIA (sau khi cài requirements.txt)
-# torch bản CUDA: xem https://pytorch.org/get-started/locally/
+# torch bản CUDA, giữ <2.9 (torchaudio 2.9+ cần torchcodec, demucs 4.0.1 chưa hỗ trợ):
+#   pip install "torch==2.8.0" "torchaudio==2.8.0" --index-url https://download.pytorch.org/whl/cu126
+#   (cu121/cu124/cu128 tùy driver: nvidia-smi -> CUDA Version)
 onnxruntime-gpu
