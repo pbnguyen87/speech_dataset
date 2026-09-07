@@ -69,6 +69,53 @@ def _verify_chunk(chunk: list[dict], model: str, dev: str, batch_size: int = 1) 
             return json.load(f)
 
 
+def _is_oom(e: Exception) -> bool:
+    return "out of memory" in str(e).lower()
+
+
+def primary_batched(model, paths: list[str], language: str, beam_size: int, batch_size: int) -> list[str]:
+    """Transcribe nhiều segment ngắn (<=30s) độc lập trong MỘT lượt encode + generate.
+
+    Đi thẳng vào encoder/generate của ctranslate2 giống BatchedInferencePipeline của
+    faster-whisper, nhưng gộp nhiều file thay vì chia 1 file dài — vì segment ở đây
+    chỉ 1-13s nên transcribe() từng file bỏ phí GPU. OOM -> chia đôi batch."""
+    import numpy as np
+    from faster_whisper.audio import decode_audio
+    from faster_whisper.tokenizer import Tokenizer
+    from faster_whisper.transcribe import get_suppressed_tokens
+
+    fe = model.feature_extractor
+    tok = Tokenizer(model.hf_tokenizer, model.model.is_multilingual, task="transcribe", language=language)
+    prompt = model.get_prompt(tok, [], without_timestamps=True)
+    suppress = get_suppressed_tokens(tok, [-1])
+    n_samples, n_frames = fe.n_samples, fe.nb_max_frames
+
+    def features(path):
+        audio = decode_audio(path, sampling_rate=fe.sampling_rate)[:n_samples]
+        audio = np.pad(audio, (0, n_samples - len(audio)))  # pad 30s như whisper gốc
+        return fe(audio, padding=0)[..., :n_frames]
+
+    texts: list[str] = []
+    i = 0
+    while i < len(paths):
+        n = min(batch_size, len(paths) - i)
+        try:
+            enc = model.encode(np.stack([features(p) for p in paths[i:i + n]]))
+            results = model.model.generate(
+                enc, [prompt] * n, beam_size=beam_size, max_length=model.max_length,
+                suppress_blank=True, suppress_tokens=suppress,
+            )
+            texts += [tok.decode(r.sequences_ids[0]).strip() for r in results]
+            i += n
+        except Exception as e:
+            if _is_oom(e) and n > 1:
+                batch_size = max(1, n // 2)
+                print(f"  primary OOM, giảm batch_size -> {batch_size}")
+                continue
+            raise
+    return texts
+
+
 def run(cfg: dict, workdir: str, limit: int | None = None) -> str:
     from faster_whisper import WhisperModel
 
@@ -83,15 +130,16 @@ def run(cfg: dict, workdir: str, limit: int | None = None) -> str:
     records = manifest.read_records(manifest.manifest_path(workdir, PREV))
     mpath = manifest.manifest_path(workdir, STAGE)
     todo = [r for r in records if r["id"] not in manifest.done_ids(mpath)]
+    p_batch = int(tcfg["primary"].get("batch_size", 1))
     print(f"[{STAGE}] {len(todo)}/{len(records)} segment cần transcribe "
-          f"(primary={tcfg['primary']['model']}@{ct_dev}/{compute})")
+          f"(primary={tcfg['primary']['model']}@{ct_dev}/{compute}, batch_size={p_batch})")
     if not todo:
         return mpath
 
     primary = WhisperModel(tcfg["primary"]["model"], device=ct_dev, compute_type=compute)
     verify_on = tcfg["verify"]["enabled"]
     batch_size = int(tcfg["verify"].get("batch_size", 1))
-    chunk_n = max(CHUNK, 2 * batch_size)  # mỗi lần spawn worker (nạp lại model) xử lý >= 2 batch
+    chunk_n = max(CHUNK, 2 * batch_size, 2 * p_batch)  # mỗi lần spawn worker (nạp lại model) xử lý >= 2 batch
     if verify_on:
         print(f"  verify: {tcfg['verify']['model']}@{dev} (subprocess, batch_size={batch_size}, chunk={chunk_n})")
 
@@ -99,15 +147,20 @@ def run(cfg: dict, workdir: str, limit: int | None = None) -> str:
         for c0 in range(0, len(todo), chunk_n):
             chunk = todo[c0:c0 + chunk_n]
 
-            # pha 1: transcribe chính (in-process, chỉ ctranslate2)
+            # pha 1: transcribe chính (in-process, chỉ ctranslate2), gộp batch nhiều segment
             texts = {}
-            for rec in chunk:
-                segs, _ = primary.transcribe(
-                    rec["audio_path"],
-                    language=tcfg["primary"]["language"],
-                    beam_size=tcfg["primary"]["beam_size"],
-                )
-                texts[rec["id"]] = " ".join(s.text for s in segs).strip()
+            if p_batch > 1:
+                outs = primary_batched(primary, [r["audio_path"] for r in chunk],
+                                       tcfg["primary"]["language"], tcfg["primary"]["beam_size"], p_batch)
+                texts = {r["id"]: t for r, t in zip(chunk, outs)}
+            else:
+                for rec in chunk:
+                    segs, _ = primary.transcribe(
+                        rec["audio_path"],
+                        language=tcfg["primary"]["language"],
+                        beam_size=tcfg["primary"]["beam_size"],
+                    )
+                    texts[rec["id"]] = " ".join(s.text for s in segs).strip()
             print(f"  primary {min(c0 + chunk_n, len(todo))}/{len(todo)}")
 
             # pha 2: verify trong subprocess riêng (chỉ torch)

@@ -38,6 +38,7 @@ transcribe:             # s5: bước tốn nhất
     compute_type: auto  # auto -> float16 trên cuda, int8 trên cpu
     language: vi
     beam_size: 5
+    batch_size: 32      # segment mỗi lượt encode+generate (1 = transcribe() từng file); OOM tự giảm một nửa
   verify:
     enabled: true
     model: vinai/PhoWhisper-large

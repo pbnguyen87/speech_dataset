@@ -57,7 +57,11 @@ def main() -> None:
     from transformers import pipeline as hf_pipeline
 
     hf_dev = 0 if device == "cuda" else (device if device == "mps" else -1)
-    asr = hf_pipeline("automatic-speech-recognition", model=model_name, device=hf_dev)
+    kw = {}
+    if device == "cuda":  # fp16: nửa VRAM, nhanh ~2x, chất lượng ASR gần như không đổi
+        import torch
+        kw["torch_dtype"] = torch.float16
+    asr = hf_pipeline("automatic-speech-recognition", model=model_name, device=hf_dev, **kw)
 
     out = transcribe_batched(asr, items, batch_size)
 
