@@ -84,7 +84,7 @@ Output:
 
 ```
 raw/
-└── <tên source>/
+└── <tên source>/          # hoặc bỏ tầng này khi source khai `dir: .`
     ├── <feed>/            # nguồn rss: mỗi feed một thư mục (host_path của url feed)
     │   ├── Tập_1_xxx.mp3
     │   └── Tập_1_xxx.json # sidecar: title, url, source, metadata riêng của nguồn

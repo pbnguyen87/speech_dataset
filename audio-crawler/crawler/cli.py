@@ -21,7 +21,8 @@ def needs_probe(known_duration: float | None, max_seconds: float) -> bool:
 
 def crawl_source(cfg: dict, out_root: str, limit: int | None) -> None:
     name, stype = cfg["name"], cfg["type"]
-    out_dir = os.path.join(out_root, name)
+    # dir: thư mục con dưới --out (mặc định = name); dir: "." -> ghi thẳng vào --out
+    out_dir = os.path.normpath(os.path.join(out_root, cfg.get("dir") or name))
     delay = float(cfg.get("delay_s", 2.0))
     print(f"[{name}] type={stype}")
 

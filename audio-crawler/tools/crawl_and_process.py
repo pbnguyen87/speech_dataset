@@ -34,7 +34,8 @@ CRAWLER_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 # ------------------------------------------------------------------ ledger tail
 class LedgerTail:
-    """Theo dõi mọi <out>/*/ledger.jsonl, trả các record mới kể từ lần đọc trước."""
+    """Theo dõi <out>/ledger.jsonl (source có dir: ".") và <out>/*/ledger.jsonl,
+    trả các record mới kể từ lần đọc trước."""
 
     def __init__(self, out_root: str):
         self.out_root = out_root
@@ -42,7 +43,9 @@ class LedgerTail:
 
     def poll(self) -> list[dict]:
         new = []
-        for path in sorted(glob.glob(os.path.join(self.out_root, "*", "ledger.jsonl"))):
+        paths = glob.glob(os.path.join(self.out_root, "ledger.jsonl")) + \
+            glob.glob(os.path.join(self.out_root, "*", "ledger.jsonl"))
+        for path in sorted(paths):
             with open(path, encoding="utf-8") as f:
                 f.seek(self.offsets.get(path, 0))
                 for line in f:

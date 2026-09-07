@@ -112,7 +112,7 @@ Tham số:
 
 ```bash
 tail -f $OUT/run.log
-wc -l $OUT/raw/vi-podcast/ledger.jsonl      # file đã tải
+wc -l $OUT/raw/ledger.jsonl      # file đã tải
 wc -l $OUT/work/processed_files.jsonl        # file đã qua pipeline
 du -sh $OUT/raw $OUT/work $OUT/work/s8_package/dataset
 nvidia-smi                                   # GPU đang dùng khi pipeline chạy
@@ -127,7 +127,7 @@ crawler, `processed_files.jsonl` của script, manifest của pipeline) bỏ qua
 
 ```
 $OUT/
-├── raw/vi-podcast/
+├── raw/                      # vi_podcast.yaml khai dir: "." nên không có tầng vi-podcast/
 │   ├── ledger.jsonl          # mọi url đã tải (resume) — KHÔNG xóa
 │   └── <feed>/               # mỗi feed một thư mục, tên = host_path của url feed
 │       ├── *.json            # sidecar metadata (giữ lại sau cleanup)

@@ -275,3 +275,13 @@ class TestFeedSubdir:
         rec = [l for l in (tmp_path / "src" / "ledger.jsonl").read_text().splitlines() if l][0]
         import json
         assert json.loads(rec)["subdir"] == "feed1"
+
+    def test_dir_dot_writes_into_out_root(self, monkeypatch, tmp_path):
+        from crawler import cli, sources as srcs
+        monkeypatch.setattr(srcs, "get", lambda t: type("A", (), {"list_items": staticmethod(
+            lambda cfg: [{"url": "https://x/a.mp3", "title": "a", "subdir": "feed1"}])}))
+        monkeypatch.setattr(downloader, "download", lambda url, dest, **k: open(dest, "wb").close() or True)
+        cli.crawl_source({"name": "src", "type": "x", "dir": ".", "delay_s": 0}, str(tmp_path), None)
+        assert (tmp_path / "feed1" / "a.mp3").exists()
+        assert (tmp_path / "ledger.jsonl").exists()
+        assert not (tmp_path / "src").exists()

@@ -5,6 +5,7 @@
 sources:
   - name: vi-podcast
     type: rss
+    dir: .                            # ghi thẳng raw/<feed>/..., không tạo raw/vi-podcast/
     urls_file: podcast_feeds_2h.txt   # tương đối theo thư mục config/
     max_hours: 10                     # tập dài hơn 10h chỉ lấy 10h đầu (kênh truyện gộp 30-40h/tập)
     delay_s: 1.0                      # 1694 feed trên nhiều host khác nhau, 1s là đủ lịch sự

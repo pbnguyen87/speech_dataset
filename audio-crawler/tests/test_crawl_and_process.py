@@ -41,6 +41,11 @@ class TestLedgerTail:
             _write_ledger(tmp_path / "raw" / s, [{"id": s, "key": s, "path": f"{s}.mp3", "source": s}])
         assert sorted(r["source"] for r in cap.LedgerTail(str(tmp_path / "raw")).poll()) == ["s1", "s2"]
 
+    def test_tail_root_ledger(self, tmp_path):  # source khai dir: "." -> ledger nằm ngay <out>/
+        _write_ledger(tmp_path / "raw", [{"id": "r", "key": "r", "path": "r.mp3", "source": "root"}])
+        _write_ledger(tmp_path / "raw" / "s1", [{"id": "s1", "key": "s1", "path": "s1.mp3", "source": "s1"}])
+        assert sorted(r["source"] for r in cap.LedgerTail(str(tmp_path / "raw")).poll()) == ["root", "s1"]
+
 
 class TestStaging:
     def test_symlinks_audio_and_sidecar_with_source_prefix(self, tmp_path):
