@@ -15,7 +15,8 @@ from urllib.parse import urlparse
 
 import requests
 
-USER_AGENT = "audio-crawler/0.1 (research dataset collection)"
+# Dạng trình duyệt vì một số site (vnexpress) trả 404 giả cho UA lạ; vẫn ghi tên crawler ở cuối.
+USER_AGENT = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) audio-crawler/0.1 (research dataset collection)"
 AUDIO_EXTS = {".mp3", ".m4a", ".wav", ".flac", ".ogg", ".opus", ".aac", ".wma"}
 _UNSAFE = re.compile(r"[^\w\-.]+", re.UNICODE)
 
