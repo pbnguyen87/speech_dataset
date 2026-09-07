@@ -20,14 +20,18 @@ PREV = "s0_ingest"
 
 def _run_demucs(src: str, out_dir: str, model: str, dev: str) -> str:
     """Chạy demucs two-stems, trả về đường dẫn file vocals.wav."""
-    subprocess.run(
-        [sys.executable, "-m", "demucs.separate", "--two-stems", "vocals",
-         "-n", model, "-d", dev if dev == "cuda" else "cpu",
-         "-o", out_dir, src],
-        check=True, capture_output=True,
-    )
+    cmd = [sys.executable, "-m", "demucs.separate", "--two-stems", "vocals",
+           "-n", model, "-d", dev if dev == "cuda" else "cpu", "-o", out_dir, src]
+    p = subprocess.run(cmd, capture_output=True, text=True)
+    if p.returncode != 0:
+        # In stderr của demucs, nếu không CalledProcessError chỉ báo mã lỗi -> không debug được
+        raise RuntimeError(f"demucs lỗi (mã {p.returncode}). Lệnh: {' '.join(cmd)}\n"
+                           f"--- stderr (cuối) ---\n{p.stderr.strip()[-2000:]}")
     base = os.path.splitext(os.path.basename(src))[0]
-    return os.path.join(out_dir, model, base, "vocals.wav")
+    out = os.path.join(out_dir, model, base, "vocals.wav")
+    if not os.path.exists(out):
+        raise RuntimeError(f"demucs chạy xong nhưng không có {out}")
+    return out
 
 
 def _music_ratio(src: str, sample_s: int, model: str, dev: str, sr: int) -> float:

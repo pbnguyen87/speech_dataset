@@ -6,6 +6,7 @@ Output: raw/<source_name>/*.mp3 + sidecar .json — đưa thẳng vào audio-pip
 
 import argparse
 import os
+import shutil
 
 import yaml
 
@@ -40,6 +41,10 @@ def crawl_source(cfg: dict, out_root: str, limit: int | None) -> None:
     print(f"[{name}] {len(items)} item")
 
     max_seconds = float(cfg["max_hours"]) * 3600 if cfg.get("max_hours") else None
+    if max_seconds and not (shutil.which("ffmpeg") and shutil.which("ffprobe")):
+        # Không có ffmpeg thì không cắt được -> sẽ tải nguyên file (có tập dài hàng chục giờ).
+        raise SystemExit(f"[{name}] max_hours={cfg['max_hours']} cần ffmpeg + ffprobe trong PATH "
+                         "(apt install ffmpeg / conda install ffmpeg)")
     os.makedirs(out_dir, exist_ok=True)
     got = 0
     with Ledger(out_dir) as ledger:
@@ -52,15 +57,24 @@ def crawl_source(cfg: dict, out_root: str, limit: int | None) -> None:
             if max_seconds and needs_probe(item.get("duration"), max_seconds):
                 # ffprobe chỉ khi feed không khai thời lượng hoặc khai vượt ngưỡng
                 info = downloader.probe(item["url"])
-                if info and info["duration"] > max_seconds:
+                if info is None:
+                    # probe lỗi (mạng/timeout/ffprobe không hỗ trợ https): KHÔNG tải nguyên file,
+                    # vẫn cắt bằng ffmpeg -t với đuôi đoán từ url; ffmpeg lỗi thì báo rõ ở dưới.
+                    print(f"    cảnh báo: ffprobe lỗi, cắt {max_seconds:g}s bằng ffmpeg với đuôi {ext}")
+                    info = {"duration": item.get("duration") or float("inf"), "ext": ext}
+                if info["duration"] > max_seconds:
                     trim, ext = True, info["ext"]
-                    extra = {"duration_original": round(info["duration"], 1),
-                             "truncated_to_seconds": int(max_seconds)}
+                    extra = {"truncated_to_seconds": int(max_seconds)}
+                    if info["duration"] != float("inf"):
+                        extra["duration_original"] = round(info["duration"], 1)
             base = downloader.safe_filename(item["title"])
             dest = os.path.join(out_dir, base + ext)
             if os.path.exists(dest):  # tên trùng nhưng url khác -> thêm hậu tố
                 dest = os.path.join(out_dir, f"{base}_{i:04d}" + ext)
-            note = f" (cắt {max_seconds / 3600:g}h / {extra['duration_original'] / 3600:.1f}h)" if trim else ""
+            note = ""
+            if trim:
+                orig = f"{extra['duration_original'] / 3600:.1f}h" if "duration_original" in extra else "?h"
+                note = f" (cắt {max_seconds / 3600:g}h / {orig})"
             print(f"  [{i + 1}/{len(items)}] {item['title'][:60]}{note}")
             ok = (downloader.download_trimmed(item["url"], dest, max_seconds, delay_s=delay) if trim
                   else downloader.download(item["url"], dest, delay_s=delay))

@@ -220,3 +220,36 @@ class TestNeedsProbe:
     def test_probe_when_unknown_or_long(self):
         assert needs_probe(None, 36000) is True
         assert needs_probe(139143, 36000) is True
+
+
+class TestCrawlSourceTrim:
+    """max_hours: không bao giờ tải nguyên file dài khi ffprobe lỗi hoặc thiếu ffmpeg."""
+
+    def _run(self, monkeypatch, tmp_path, probe_result, feed_duration):
+        from crawler import cli, sources as srcs
+        calls = []
+        monkeypatch.setattr(shutil, "which", lambda n: "/usr/bin/" + n)
+        monkeypatch.setattr(srcs, "get", lambda t: type("A", (), {"list_items": staticmethod(
+            lambda cfg: [{"url": "https://x/a.mp3", "title": "a", "duration": feed_duration}])}))
+        monkeypatch.setattr(downloader, "probe", lambda url: probe_result)
+        monkeypatch.setattr(downloader, "download", lambda *a, **k: calls.append("full") or True)
+        monkeypatch.setattr(downloader, "download_trimmed",
+                            lambda url, dest, s, **k: calls.append(("trim", s)) or open(dest, "wb").close() or True)
+        cli.crawl_source({"name": "t", "type": "x", "max_hours": 0.1, "delay_s": 0}, str(tmp_path), None)
+        return calls
+
+    def test_probe_fails_still_trims(self, monkeypatch, tmp_path):
+        assert self._run(monkeypatch, tmp_path, None, None) == [("trim", 360.0)]
+
+    def test_probe_fails_feed_long_trims(self, monkeypatch, tmp_path):
+        assert self._run(monkeypatch, tmp_path, None, 139143) == [("trim", 360.0)]
+
+    def test_short_file_downloads_full(self, monkeypatch, tmp_path):
+        assert self._run(monkeypatch, tmp_path, {"duration": 100, "ext": ".mp3"}, None) == ["full"]
+
+    def test_missing_ffmpeg_aborts(self, monkeypatch, tmp_path):
+        from crawler import cli, sources as srcs
+        monkeypatch.setattr(shutil, "which", lambda n: None)
+        monkeypatch.setattr(srcs, "get", lambda t: type("A", (), {"list_items": staticmethod(lambda cfg: [])}))
+        with pytest.raises(SystemExit, match="ffmpeg"):
+            cli.crawl_source({"name": "t", "type": "x", "max_hours": 0.1}, str(tmp_path), None)
