@@ -41,7 +41,7 @@ transcribe:             # s5: bước tốn nhất
   verify:
     enabled: true
     model: vinai/PhoWhisper-large
-    batch_size: 8
+    batch_size: 64      # segment mỗi lần forward của PhoWhisper; hết VRAM worker tự giảm một nửa
 
 textnorm:               # s6
   backend: auto         # vinorm | basic | auto (vinorm nếu cài được, fallback basic)

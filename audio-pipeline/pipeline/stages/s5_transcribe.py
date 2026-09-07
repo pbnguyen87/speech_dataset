@@ -21,7 +21,7 @@ os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
 
 STAGE = "s5_transcribe"
 PREV = "s4_speaker"
-CHUNK = 32  # segment mỗi chunk: transcribe -> verify -> ghi manifest
+CHUNK = 32  # segment mỗi chunk tối thiểu: transcribe -> verify -> ghi manifest (thực tế >= 2*batch_size)
 
 _PUNCT = re.compile(r"[^\w\s]", re.UNICODE)
 _WS = re.compile(r"\s+")
@@ -50,8 +50,8 @@ def cer(ref: str, hyp: str) -> float:
     return prev[-1] / len(ref)
 
 
-def _verify_chunk(chunk: list[dict], model: str, dev: str) -> dict:
-    """Chạy PhoWhisper trên chunk segment trong subprocess riêng."""
+def _verify_chunk(chunk: list[dict], model: str, dev: str, batch_size: int = 1) -> dict:
+    """Chạy PhoWhisper trên chunk segment trong subprocess riêng, batch_size segment mỗi forward."""
     with tempfile.TemporaryDirectory() as td:
         in_path = os.path.join(td, "in.json")
         out_path = os.path.join(td, "out.json")
@@ -59,7 +59,7 @@ def _verify_chunk(chunk: list[dict], model: str, dev: str) -> dict:
             json.dump({r["id"]: r["audio_path"] for r in chunk}, f)
         proc = subprocess.run(
             [sys.executable, "-m", "pipeline.stages.s5_verify_worker",
-             in_path, out_path, model, dev],
+             in_path, out_path, model, dev, str(batch_size)],
             capture_output=True, text=True,
         )
         if proc.returncode != 0:
@@ -90,12 +90,14 @@ def run(cfg: dict, workdir: str, limit: int | None = None) -> str:
 
     primary = WhisperModel(tcfg["primary"]["model"], device=ct_dev, compute_type=compute)
     verify_on = tcfg["verify"]["enabled"]
+    batch_size = int(tcfg["verify"].get("batch_size", 1))
+    chunk_n = max(CHUNK, 2 * batch_size)  # mỗi lần spawn worker (nạp lại model) xử lý >= 2 batch
     if verify_on:
-        print(f"  verify: {tcfg['verify']['model']}@{dev} (subprocess)")
+        print(f"  verify: {tcfg['verify']['model']}@{dev} (subprocess, batch_size={batch_size}, chunk={chunk_n})")
 
     with manifest.ManifestWriter(mpath) as w:
-        for c0 in range(0, len(todo), CHUNK):
-            chunk = todo[c0:c0 + CHUNK]
+        for c0 in range(0, len(todo), chunk_n):
+            chunk = todo[c0:c0 + chunk_n]
 
             # pha 1: transcribe chính (in-process, chỉ ctranslate2)
             texts = {}
@@ -106,10 +108,10 @@ def run(cfg: dict, workdir: str, limit: int | None = None) -> str:
                     beam_size=tcfg["primary"]["beam_size"],
                 )
                 texts[rec["id"]] = " ".join(s.text for s in segs).strip()
-            print(f"  primary {min(c0 + CHUNK, len(todo))}/{len(todo)}")
+            print(f"  primary {min(c0 + chunk_n, len(todo))}/{len(todo)}")
 
             # pha 2: verify trong subprocess riêng (chỉ torch)
-            verifies = _verify_chunk(chunk, tcfg["verify"]["model"], dev) if verify_on else {}
+            verifies = _verify_chunk(chunk, tcfg["verify"]["model"], dev, batch_size) if verify_on else {}
 
             # pha 3: ghi manifest cho chunk (resume theo chunk)
             for rec in chunk:
@@ -117,7 +119,7 @@ def run(cfg: dict, workdir: str, limit: int | None = None) -> str:
                 tv = verifies.get(rec["id"])
                 w.write({**rec, "text": text, "text_verify": tv,
                          "cer": round(cer(text, tv), 4) if tv is not None else None})
-            print(f"  ghi {min(c0 + CHUNK, len(todo))}/{len(todo)} segment")
+            print(f"  ghi {min(c0 + chunk_n, len(todo))}/{len(todo)} segment")
 
     print(f"[{STAGE}] xong")
     return mpath

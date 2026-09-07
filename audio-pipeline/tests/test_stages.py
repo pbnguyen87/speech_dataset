@@ -169,3 +169,35 @@ class TestPackage:
         assert s1 == assign_split("spkA", 0.1, 0.1, 42)
         splits = {assign_split(f"spk{i}", 0.1, 0.1, 42) for i in range(200)}
         assert splits == {"train", "val", "test"}
+
+
+class TestVerifyBatched:
+    def _asr(self, fail_on=None, oom_above=None):
+        calls = []
+        def asr(paths, batch_size):
+            calls.append(len(paths))
+            if oom_above and len(paths) > oom_above:
+                raise RuntimeError("CUDA out of memory")
+            if fail_on and fail_on in paths:
+                raise ValueError("file hỏng")
+            return [{"text": f" {p} "} for p in paths]
+        return asr, calls
+
+    def test_batches(self):
+        from pipeline.stages.s5_verify_worker import transcribe_batched
+        asr, calls = self._asr()
+        items = {f"s{i}": f"p{i}" for i in range(10)}
+        out = transcribe_batched(asr, items, 4)
+        assert calls == [4, 4, 2] and out["s9"] == "p9" and len(out) == 10
+
+    def test_oom_halves_batch(self):
+        from pipeline.stages.s5_verify_worker import transcribe_batched
+        asr, calls = self._asr(oom_above=2)
+        out = transcribe_batched(asr, {f"s{i}": f"p{i}" for i in range(4)}, 8)
+        assert calls == [4, 2, 2] and len(out) == 4
+
+    def test_bad_file_only_loses_itself(self):
+        from pipeline.stages.s5_verify_worker import transcribe_batched
+        asr, _ = self._asr(fail_on="p1")
+        out = transcribe_batched(asr, {f"s{i}": f"p{i}" for i in range(3)}, 3)
+        assert out == {"s0": "p0", "s1": None, "s2": "p2"}
