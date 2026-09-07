@@ -5,6 +5,7 @@ Output: raw/<source_name>/[<feed>/]*.mp3 + sidecar .json — đưa thẳng vào 
 """
 
 import argparse
+import itertools
 import os
 import shutil
 
@@ -36,10 +37,14 @@ def crawl_source(cfg: dict, out_root: str, limit: int | None) -> None:
         print(f"[{name}] xong: {got} file mới trong {out_dir}")
         return
 
-    items = adapter.list_items(cfg)
+    # iter_items (generator, rss) -> tải ngay từng feed; list_items -> liệt kê hết rồi tải
+    if hasattr(adapter, "iter_items"):
+        items = adapter.iter_items(cfg)
+    else:
+        items = adapter.list_items(cfg)
+        print(f"[{name}] {len(items)} item")
     if limit:
-        items = items[:limit]
-    print(f"[{name}] {len(items)} item")
+        items = itertools.islice(items, limit)
 
     max_seconds = float(cfg["max_hours"]) * 3600 if cfg.get("max_hours") else None
     if max_seconds and not (shutil.which("ffmpeg") and shutil.which("ffprobe")):
@@ -79,7 +84,7 @@ def crawl_source(cfg: dict, out_root: str, limit: int | None) -> None:
             if trim:
                 orig = f"{extra['duration_original'] / 3600:.1f}h" if "duration_original" in extra else "?h"
                 note = f" (cắt {max_seconds / 3600:g}h / {orig})"
-            print(f"  [{i + 1}/{len(items)}] {item['title'][:60]}{note}")
+            print(f"  [{i + 1}] {item['title'][:60]}{note}")
             ok = (downloader.download_trimmed(item["url"], dest, max_seconds, delay_s=delay) if trim
                   else downloader.download(item["url"], dest, delay_s=delay))
             if ok:

@@ -6,8 +6,10 @@
         README.md     # cách khai báo trong config/sources.yaml
 
 Hai kiểu adapter:
-  - list_items(cfg) -> [{"url", "title", "meta", ("key")}]: chỉ liệt kê,
+  - list_items(cfg) -> [{"url", "title", "meta", ("key", "subdir")}]: chỉ liệt kê,
     phần tải / ledger / sidecar dùng chung trong cli.py (archive_org, rss, html).
+    Có thêm iter_items(cfg) (generator) thì cli ưu tiên dùng: tải ngay khi có
+    item, không chờ liệt kê xong (rss đọc từng feed một).
   - crawl(cfg, out_dir, delay_s, limit) -> int: tự tải bằng công cụ riêng
     (youtube qua yt-dlp), tự ghi sidecar + ledger, trả số file mới.
 

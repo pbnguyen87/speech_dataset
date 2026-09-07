@@ -53,11 +53,13 @@ def feed_slug(feed_url: str) -> str:
     return safe_filename(u.netloc + u.path.rstrip("/"), max_len=80) or "feed"
 
 
-def list_items(cfg: dict) -> list[dict]:
-    """Trả danh sách item chuẩn: {'url', 'title', 'subdir', 'meta'}. max_items áp cho từng feed.
+def iter_items(cfg: dict):
+    """Sinh item chuẩn {'url', 'title', 'subdir', 'duration', 'meta'} theo từng feed:
+    đọc 1 feed -> yield hết tập của feed đó -> mới đọc feed kế. cli tải ngay khi có item,
+    không phải chờ đọc hết hàng nghìn feed. max_items áp cho từng feed.
     subdir = feed_slug(feed): cli xếp audio vào raw/<source>/<subdir>/ (mỗi feed một thư mục)."""
-    items = []
-    for feed_url in targets.resolve(cfg, "url"):  # url | urls | urls_file
+    feeds = targets.resolve(cfg, "url")  # url | urls | urls_file
+    for k, feed_url in enumerate(feeds):
         try:
             r = requests.get(feed_url, timeout=30, headers={"User-Agent": USER_AGENT})
             r.raise_for_status()
@@ -67,12 +69,17 @@ def list_items(cfg: dict) -> list[dict]:
             continue
         if cfg.get("max_items"):
             episodes = episodes[:cfg["max_items"]]
-        items += [{
-            "url": e["audio_url"],
-            "title": e["title"],
-            "subdir": feed_slug(feed_url),
-            "duration": e["duration"],  # giây theo feed khai báo; cli dùng để bỏ qua ffprobe
-            "meta": {"pub_date": e["pub_date"], "description": e["description"],
-                     "duration_feed": e["duration"], "feed": feed_url},
-        } for e in episodes]
-    return items
+        print(f"  feed {k + 1}/{len(feeds)}: {feed_url} ({len(episodes)} tập)")
+        for e in episodes:
+            yield {
+                "url": e["audio_url"],
+                "title": e["title"],
+                "subdir": feed_slug(feed_url),
+                "duration": e["duration"],  # giây theo feed khai báo; cli dùng để bỏ qua ffprobe
+                "meta": {"pub_date": e["pub_date"], "description": e["description"],
+                         "duration_feed": e["duration"], "feed": feed_url},
+            }
+
+
+def list_items(cfg: dict) -> list[dict]:
+    return list(iter_items(cfg))

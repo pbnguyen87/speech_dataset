@@ -17,5 +17,7 @@ Mỗi `<item>` có `<enclosure>` là một episode audio. Không cần scrape HT
 
 Mỗi feed một thư mục con `raw/<name>/<host_path-của-feed>/` (vd `vnexpress.net_rss_podcast_ban-on-khong.rss`);
 ledger vẫn một file chung `raw/<name>/ledger.jsonl`.
+Đọc và tải theo từng feed (đọc feed 1 -> tải hết tập của nó -> đọc feed 2...), nên với `urls_file`
+hàng nghìn feed, audio đầu tiên về ngay sau vài giây thay vì chờ liệt kê hết.
 Feed lỗi chỉ bị báo và bỏ qua, các feed khác vẫn chạy. Sidecar lưu thêm `pub_date`, `description` (cắt 500 ký tự), `feed`.
 Tìm feed của podcast qua trang podcast hoặc podcastindex.org.

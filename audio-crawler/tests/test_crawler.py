@@ -285,3 +285,35 @@ class TestFeedSubdir:
         assert (tmp_path / "feed1" / "a.mp3").exists()
         assert (tmp_path / "ledger.jsonl").exists()
         assert not (tmp_path / "src").exists()
+
+
+class TestFeedByFeed:
+    def test_iter_items_yields_before_next_feed_is_fetched(self, monkeypatch):
+        """Tập của feed 1 phải ra trước khi feed 2 được đọc."""
+        from crawler.sources.rss import adapter
+        fetched = []
+
+        class R:
+            text = RSS_FIXTURE
+            def raise_for_status(self): pass
+        def fake_get(url, **k):
+            fetched.append(url); return R()
+        monkeypatch.setattr(adapter.requests, "get", fake_get)
+        gen = adapter.iter_items({"name": "x", "urls": ["https://f1/rss", "https://f2/rss"]})
+        first = next(gen)
+        assert fetched == ["https://f1/rss"] and first["subdir"] == "f1_rss"
+        rest = list(gen)
+        assert fetched == ["https://f1/rss", "https://f2/rss"] and rest[-1]["subdir"] == "f2_rss"
+
+    def test_cli_limit_on_stream(self, monkeypatch, tmp_path):
+        from crawler import cli, sources as srcs
+        def gen(cfg):
+            for i in range(10):
+                yield {"url": f"https://x/{i}.mp3", "title": str(i)}
+        monkeypatch.setattr(srcs, "get", lambda t: type("A", (), {"iter_items": staticmethod(gen)}))
+        monkeypatch.setattr(downloader, "download", lambda url, dest, **k: open(dest, "wb").close() or True)
+        cli.crawl_source({"name": "s", "type": "x", "delay_s": 0}, str(tmp_path), 3)
+        assert sorted(p.name for p in (tmp_path / "s").glob("*.mp3")) == ["0.mp3", "1.mp3", "2.mp3"]
+
+    def test_rss_package_exports_iter_items(self):
+        assert callable(getattr(sources.get("rss"), "iter_items", None))
