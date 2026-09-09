@@ -15,3 +15,7 @@ pretrained_models/
 
 # file tạm của Claude Code
 .claude/scheduled_tasks.lock
+
+# file tạm của vim
+*.swp
+*.swo
