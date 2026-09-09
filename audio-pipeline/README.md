@@ -109,6 +109,34 @@ CLI:
 - `--device`: override `cpu|cuda|mps` (mặc định `auto` trong config)
 - `--config`: lặp lại được, file sau override file trước theo từng key
 
+### Chế độ stream: 8 stage chạy song song
+
+```bash
+# raw đã có sẵn, không thêm file mới
+python -m pipeline serve --raw-dir raw --workdir work --input-done [--cleanup]
+
+# raw đang được crawler đổ thêm: chạy không có --input-done, khi crawler xong thì
+touch work/INPUT_DONE            # (tools/crawl_and_process.py --stream tự làm việc này)
+
+python -m pipeline status --workdir work   # số dòng manifest + cờ DONE từng stage
+```
+
+Mỗi stage s0–s7 là một tiến trình riêng, nạp model một lần cho cả run. Stage sN
+đọc dần manifest của sN-1 (theo offset, bỏ qua dòng đang ghi dở), xử lý rồi ghi
+manifest của mình từng dòng. Nhờ vậy GPU (s5) chạy liên tục trong khi các stage CPU
+chuẩn bị dữ liệu tiếp theo, và **dấu "đã làm" chính là dòng manifest**: kill bất kỳ
+tiến trình nào rồi chạy lại lệnh cũ là tiếp tục từ chỗ dở, không làm lại.
+
+- Cờ xong lan xuống: `INPUT_DONE` → `s0_ingest/DONE` → … → `s7_loudnorm/DONE`, sau đó
+  supervisor chạy s8 một lần rồi thoát. Stage chết thì tự khởi động lại (`stream.max_restarts`).
+- s2 ghi `n_segments` vào từng segment; s4 (cluster speaker theo file) chỉ xử lý một file
+  khi đã nhận đủ segment của nó. s5 gom đủ batch hoặc chờ tối đa `stream.flush_seconds`.
+- Một GPU: `stream.gpu_lock` cho s1/s4/s5 thay phiên dùng GPU để VRAM không cộng dồn.
+- `--cleanup`: s0 xóa audio raw (giữ sidecar), s2 xóa wav s0/s1 của file, s7 xóa wav s2
+  của segment, s8 xóa wav tier C — mỗi thứ xóa ngay khi stage cuối cùng dùng nó xong.
+- s0 nhận file raw khi có sidecar `.json` cùng tên, hoặc mtime cũ hơn `stream.settle_seconds`
+  (tránh đọc file đang tải dở).
+
 ## Input
 
 Thư mục `--raw-dir` chứa audio bất kỳ định dạng (mp3/m4a/wav/flac/ogg/opus/aac/wma),
@@ -121,7 +149,7 @@ pipeline trong trường `source_meta`.
 ```
 workdir/
 ├── s0_ingest/{audio/, manifest.jsonl}
-├── s1_separate/...                     # mỗi stage một thư mục + manifest riêng
+├── s1_separate/...                     # mỗi stage một thư mục + manifest riêng (+ DONE ở chế độ stream)
 ├── ...
 └── s8_package/
     ├── dataset/

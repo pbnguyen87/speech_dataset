@@ -83,40 +83,55 @@ class DNSMOSScorer:
         return round(sum(scores) / len(scores), 3) if scores else None
 
 
-def run(cfg: dict, workdir: str, limit: int | None = None) -> str:
-    from .. import device as device_mod
+class Worker:
+    batch_n = 1
+    flush_s = 0
 
-    qcfg = cfg["quality"]
-    # limit áp ở cấp file nguồn (s0-s2); stage segment-level xử lý toàn bộ
-    records = manifest.read_records(manifest.manifest_path(workdir, PREV))
-    mpath = manifest.manifest_path(workdir, STAGE)
+    def __init__(self, cfg: dict, workdir: str):
+        from .. import device as device_mod
 
-    dns_enabled = qcfg["dnsmos"]["enabled"]
-    scorer = None
-    if dns_enabled in (True, "auto"):
-        scorer = DNSMOSScorer(qcfg["dnsmos"]["model_path"],
-                              device_mod.resolve(cfg["device"]))
-        if scorer.session is None:
-            if dns_enabled is True:
+        self.qcfg = cfg["quality"]
+        self.w = manifest.ManifestWriter(manifest.manifest_path(workdir, STAGE))
+        dns_enabled = self.qcfg["dnsmos"]["enabled"]
+        self.scorer = None
+        if dns_enabled in (True, "auto"):
+            scorer = DNSMOSScorer(self.qcfg["dnsmos"]["model_path"], device_mod.resolve(cfg["device"]))
+            if scorer.session is None and dns_enabled is True:
                 raise SystemExit("dnsmos.enabled=true nhưng model/onnxruntime không khả dụng")
-            scorer = None
+            self.scorer = scorer if scorer.session is not None else None
+        print(f"[{STAGE}] dnsmos={'on' if self.scorer else 'off'}")
 
-    print(f"[{STAGE}] {len(records)} segment (dnsmos={'on' if scorer else 'off'})")
-    with manifest.ManifestWriter(mpath) as w:
+    def is_done(self, rec: dict) -> bool:
+        return self.w.is_done(rec["id"])
+
+    def ready(self, pending: list, upstream_done: bool):
+        return pending, []
+
+    def process(self, records: list[dict]) -> None:
         for i, rec in enumerate(records):
-            if w.is_done(rec["id"]):
+            if self.w.is_done(rec["id"]):
                 continue
             x, sr = audio_utils.load_wav(rec["audio_path"])
-            rec = {
+            self.w.write({
                 **rec,
-                "clipping": round(clipping_ratio(x, qcfg["clipping_threshold"]), 5),
+                "clipping": round(clipping_ratio(x, self.qcfg["clipping_threshold"]), 5),
                 "snr_db": round(estimate_snr_db(x, sr), 2),
                 "bandwidth_hz": round(bandwidth_hz(x, sr), 1),
-                "dnsmos": scorer.score(x, sr) if scorer else None,
-            }
-            w.write(rec)
+                "dnsmos": self.scorer.score(x, sr) if self.scorer else None,
+            })
             if (i + 1) % 200 == 0:
                 print(f"  {i+1}/{len(records)}")
 
+    def close(self) -> None:
+        self.w.close()
+
+
+def run(cfg: dict, workdir: str, limit: int | None = None) -> str:
+    # limit áp ở cấp file nguồn (s0-s2); stage segment-level xử lý toàn bộ
+    records = manifest.read_records(manifest.manifest_path(workdir, PREV))
+    worker = Worker(cfg, workdir)
+    print(f"[{STAGE}] {len(records)} segment")
+    worker.process(records)
+    worker.close()
     print(f"[{STAGE}] xong")
-    return mpath
+    return manifest.manifest_path(workdir, STAGE)

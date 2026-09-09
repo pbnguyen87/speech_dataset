@@ -3,6 +3,15 @@
 
 device: auto            # auto | cpu | cuda | mps
 
+stream:                 # chế độ 8 stage chạy song song: python -m pipeline serve
+  poll_seconds: 2       # chu kỳ đọc manifest stage trước
+  flush_seconds: 30     # s5: chờ gom đủ batch tối đa bấy nhiêu giây rồi chạy với những gì có
+  settle_seconds: 60    # s0: file raw không có sidecar .json chỉ nhận khi mtime cũ hơn bấy nhiêu giây
+  gpu_lock: true        # s1/s4/s5 thay phiên dùng GPU (một card) để không cộng dồn VRAM
+  max_restarts: 5       # stage chết thì khởi động lại tối đa bấy nhiêu lần
+  status_seconds: 60    # supervisor in dòng trạng thái mỗi bấy nhiêu giây
+  cleanup: false        # xóa raw + wav trung gian ngay khi stage cuối dùng chúng xong (--cleanup)
+
 ingest:
   extensions: [".mp3", ".m4a", ".wav", ".flac", ".ogg", ".opus", ".aac", ".wma"]
   target_sr: 24000      # sample rate chuẩn của toàn pipeline

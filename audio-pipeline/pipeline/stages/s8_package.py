@@ -23,6 +23,19 @@ META_COLS = ["file_name", "text", "text_normalized", "speaker_id", "duration",
              "multi_speaker", "source_path"]
 
 
+def normalize_source_path(path: str | None) -> str | None:
+    """Đưa source_path về một kiểu tên: '<feed>/<tập>.mp3'.
+
+    Chế độ lô cũ (tools/crawl_and_process.py không --stream) đặt tên staging
+    'nguon__feed__tap.mp3'; chế độ stream ghi đường dẫn thật trong raw 'feed/tap.mp3'.
+    Tên staging (không có '/', có '__') -> bỏ phần tên nguồn, nối các phần còn lại bằng '/'.
+    """
+    if not path or "/" in path or "__" not in path:
+        return path
+    parts = path.split("__")
+    return "/".join(parts[1:]) if len(parts) > 1 else path
+
+
 def assign_tier(rec: dict, tiers_cfg: dict) -> str:
     """Xét lần lượt các tier theo thứ tự khai báo; không đạt tier nào -> 'C'."""
     for name, t in tiers_cfg.items():
@@ -72,8 +85,9 @@ def run(cfg: dict, workdir: str, limit: int | None = None) -> str:
     out_dir = manifest.stage_dir(workdir, STAGE)
     mpath = manifest.manifest_path(workdir, STAGE)
 
-    # gán tier + split (chạy lại từ đầu mỗi lần — stage này rẻ)
+    # gán tier + split (chạy lại từ đầu mỗi lần — stage này rẻ); chuẩn hóa source_path
     for rec in records:
+        rec["source_path"] = normalize_source_path(rec.get("source_path"))
         rec["tier"] = assign_tier(rec, pcfg["tiers"])
         rec["split"] = assign_split(rec.get("speaker_id", rec["file_id"]),
                                     pcfg["split"]["val_ratio"],
@@ -116,6 +130,17 @@ def run(cfg: dict, workdir: str, limit: int | None = None) -> str:
 
     # 4) report
     _write_report(records, keep_tiers, os.path.join(out_dir, "report.html"))
+
+    # 5) stream.cleanup: xóa wav s7 của tier C (không vào dataset; tier A/B giữ vì s8 xây lại từ đó)
+    if cfg.get("stream", {}).get("cleanup"):
+        s7_audio = os.path.abspath(os.path.join(workdir, "s7_loudnorm", "audio"))
+        n = 0
+        for rec in records:
+            p = os.path.abspath(rec.get("audio_path", ""))
+            if rec.get("tier") == "C" and p.startswith(s7_audio + os.sep) and os.path.exists(p):
+                os.remove(p)
+                n += 1
+        print(f"[{STAGE}] cleanup: xóa {n} wav tier C")
     print(f"[{STAGE}] xong — dataset: {ds_dir}")
     return mpath
 

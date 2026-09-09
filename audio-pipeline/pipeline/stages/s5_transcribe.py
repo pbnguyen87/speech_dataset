@@ -15,6 +15,7 @@ import tempfile
 import unicodedata
 
 from .. import device as device_mod, manifest
+from ..gpulock import gpu_lock, wants_lock
 
 # safety net nếu vẫn có 2 OpenMP runtime trong một process
 os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
@@ -50,23 +51,56 @@ def cer(ref: str, hyp: str) -> float:
     return prev[-1] / len(ref)
 
 
-def _verify_chunk(chunk: list[dict], model: str, dev: str, batch_size: int = 1) -> dict:
-    """Chạy PhoWhisper trên chunk segment trong subprocess riêng, batch_size segment mỗi forward."""
-    with tempfile.TemporaryDirectory() as td:
-        in_path = os.path.join(td, "in.json")
-        out_path = os.path.join(td, "out.json")
-        with open(in_path, "w", encoding="utf-8") as f:
-            json.dump({r["id"]: r["audio_path"] for r in chunk}, f)
-        proc = subprocess.run(
-            [sys.executable, "-m", "pipeline.stages.s5_verify_worker",
-             in_path, out_path, model, dev, str(batch_size)],
-            capture_output=True, text=True,
+class VerifyClient:
+    """Giữ subprocess PhoWhisper thường trú (nạp model một lần); chết thì tự khởi động lại."""
+
+    def __init__(self, model: str, dev: str, batch_size: int):
+        self.model, self.dev, self.batch_size = model, dev, batch_size
+        self.proc = None
+
+    def _start(self) -> None:
+        self.proc = subprocess.Popen(
+            [sys.executable, "-m", "pipeline.stages.s5_verify_worker", "--serve", self.model, self.dev],
+            stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True, bufsize=1,
         )
-        if proc.returncode != 0:
-            print(f"  verify worker lỗi (chunk bỏ verify): {proc.stderr.strip()[-300:]}")
+        line = self.proc.stdout.readline().strip()
+        if line != "ready":
+            raise RuntimeError(f"verify worker không khởi động được: {line!r}")
+
+    def run(self, chunk: list[dict]) -> dict:
+        with tempfile.TemporaryDirectory() as td:
+            in_path, out_path = os.path.join(td, "in.json"), os.path.join(td, "out.json")
+            with open(in_path, "w", encoding="utf-8") as f:
+                json.dump({r["id"]: r["audio_path"] for r in chunk}, f)
+            for attempt in (1, 2):
+                try:
+                    if self.proc is None or self.proc.poll() is not None:
+                        self._start()
+                    self.proc.stdin.write(json.dumps({"in": in_path, "out": out_path,
+                                                      "batch_size": self.batch_size}) + "\n")
+                    self.proc.stdin.flush()
+                    line = self.proc.stdout.readline().strip()
+                    if line == "ok":
+                        with open(out_path, encoding="utf-8") as f:
+                            return json.load(f)
+                    print(f"  verify worker lỗi: {line or 'chết giữa chừng'}")
+                    if not line:  # process chết -> khởi động lại rồi thử lại một lần
+                        self.proc = None
+                        continue
+                    return {}
+                except (BrokenPipeError, OSError) as e:
+                    print(f"  verify worker lỗi I/O: {e}")
+                    self.proc = None
+            print("  verify worker lỗi 2 lần — chunk bỏ verify")
             return {}
-        with open(out_path, encoding="utf-8") as f:
-            return json.load(f)
+
+    def close(self) -> None:
+        if self.proc and self.proc.poll() is None:
+            try:
+                self.proc.stdin.close()
+                self.proc.wait(timeout=30)
+            except Exception:
+                self.proc.kill()
 
 
 def _is_oom(e: Exception) -> bool:
@@ -116,63 +150,90 @@ def primary_batched(model, paths: list[str], language: str, beam_size: int, batc
     return texts
 
 
-def run(cfg: dict, workdir: str, limit: int | None = None) -> str:
-    from faster_whisper import WhisperModel
+class Worker:
+    flush_s = 30
 
-    tcfg = cfg["transcribe"]
-    dev = device_mod.resolve(cfg["device"])
-    ct_dev = device_mod.for_ctranslate2(dev)
-    compute = tcfg["primary"]["compute_type"]
-    if compute == "auto":
-        compute = "float16" if ct_dev == "cuda" else "int8"
+    def __init__(self, cfg: dict, workdir: str):
+        from faster_whisper import WhisperModel
 
-    # limit áp ở cấp file nguồn (s0-s2); stage segment-level xử lý toàn bộ
-    records = manifest.read_records(manifest.manifest_path(workdir, PREV))
-    mpath = manifest.manifest_path(workdir, STAGE)
-    todo = [r for r in records if r["id"] not in manifest.done_ids(mpath)]
-    p_batch = int(tcfg["primary"].get("batch_size", 1))
-    print(f"[{STAGE}] {len(todo)}/{len(records)} segment cần transcribe "
-          f"(primary={tcfg['primary']['model']}@{ct_dev}/{compute}, batch_size={p_batch})")
-    if not todo:
-        return mpath
+        self.tcfg = cfg["transcribe"]
+        self.workdir = workdir
+        self.lock = wants_lock(cfg)
+        dev = device_mod.resolve(cfg["device"])
+        ct_dev = device_mod.for_ctranslate2(dev)
+        compute = self.tcfg["primary"]["compute_type"]
+        if compute == "auto":
+            compute = "float16" if ct_dev == "cuda" else "int8"
+        self.p_batch = int(self.tcfg["primary"].get("batch_size", 1))
+        self.v_batch = int(self.tcfg["verify"].get("batch_size", 1))
+        self.chunk_n = max(CHUNK, 2 * self.v_batch, 2 * self.p_batch)  # mỗi chunk >= 2 batch
+        self.batch_n = self.chunk_n
+        self.flush_s = float(cfg.get("stream", {}).get("flush_seconds", 30))
+        self.w = manifest.ManifestWriter(manifest.manifest_path(workdir, STAGE))
+        print(f"[{STAGE}] primary={self.tcfg['primary']['model']}@{ct_dev}/{compute} batch_size={self.p_batch}")
+        self.primary = WhisperModel(self.tcfg["primary"]["model"], device=ct_dev, compute_type=compute)
+        self.verify = None
+        if self.tcfg["verify"]["enabled"]:
+            self.verify = VerifyClient(self.tcfg["verify"]["model"], dev, self.v_batch)
+            print(f"  verify: {self.tcfg['verify']['model']}@{dev} (subprocess thường trú, "
+                  f"batch_size={self.v_batch}, chunk={self.chunk_n})")
 
-    primary = WhisperModel(tcfg["primary"]["model"], device=ct_dev, compute_type=compute)
-    verify_on = tcfg["verify"]["enabled"]
-    batch_size = int(tcfg["verify"].get("batch_size", 1))
-    chunk_n = max(CHUNK, 2 * batch_size, 2 * p_batch)  # mỗi lần spawn worker (nạp lại model) xử lý >= 2 batch
-    if verify_on:
-        print(f"  verify: {tcfg['verify']['model']}@{dev} (subprocess, batch_size={batch_size}, chunk={chunk_n})")
+    def is_done(self, rec: dict) -> bool:
+        return self.w.is_done(rec["id"])
 
-    with manifest.ManifestWriter(mpath) as w:
-        for c0 in range(0, len(todo), chunk_n):
-            chunk = todo[c0:c0 + chunk_n]
+    def ready(self, pending: list, upstream_done: bool):
+        return pending, []
+
+    def process(self, records: list[dict]) -> None:
+        todo = [r for r in records if not self.w.is_done(r["id"])]
+        pcfg = self.tcfg["primary"]
+        for c0 in range(0, len(todo), self.chunk_n):
+            chunk = todo[c0:c0 + self.chunk_n]
 
             # pha 1: transcribe chính (in-process, chỉ ctranslate2), gộp batch nhiều segment
             texts = {}
-            if p_batch > 1:
-                outs = primary_batched(primary, [r["audio_path"] for r in chunk],
-                                       tcfg["primary"]["language"], tcfg["primary"]["beam_size"], p_batch)
-                texts = {r["id"]: t for r, t in zip(chunk, outs)}
-            else:
-                for rec in chunk:
-                    segs, _ = primary.transcribe(
-                        rec["audio_path"],
-                        language=tcfg["primary"]["language"],
-                        beam_size=tcfg["primary"]["beam_size"],
-                    )
-                    texts[rec["id"]] = " ".join(s.text for s in segs).strip()
-            print(f"  primary {min(c0 + chunk_n, len(todo))}/{len(todo)}")
+            with gpu_lock(self.workdir, self.lock):
+                if self.p_batch > 1:
+                    outs = primary_batched(self.primary, [r["audio_path"] for r in chunk],
+                                           pcfg["language"], pcfg["beam_size"], self.p_batch)
+                    texts = {r["id"]: t for r, t in zip(chunk, outs)}
+                else:
+                    for rec in chunk:
+                        segs, _ = self.primary.transcribe(rec["audio_path"], language=pcfg["language"],
+                                                          beam_size=pcfg["beam_size"])
+                        texts[rec["id"]] = " ".join(s.text for s in segs).strip()
+            print(f"  primary {min(c0 + self.chunk_n, len(todo))}/{len(todo)}")
 
             # pha 2: verify trong subprocess riêng (chỉ torch)
-            verifies = _verify_chunk(chunk, tcfg["verify"]["model"], dev, batch_size) if verify_on else {}
+            verifies = {}
+            if self.verify:
+                with gpu_lock(self.workdir, self.lock):
+                    verifies = self.verify.run(chunk)
 
             # pha 3: ghi manifest cho chunk (resume theo chunk)
             for rec in chunk:
                 text = texts[rec["id"]]
                 tv = verifies.get(rec["id"])
-                w.write({**rec, "text": text, "text_verify": tv,
-                         "cer": round(cer(text, tv), 4) if tv is not None else None})
-            print(f"  ghi {min(c0 + chunk_n, len(todo))}/{len(todo)} segment")
+                self.w.write({**rec, "text": text, "text_verify": tv,
+                              "cer": round(cer(text, tv), 4) if tv is not None else None})
+            print(f"  ghi {min(c0 + self.chunk_n, len(todo))}/{len(todo)} segment")
 
+    def close(self) -> None:
+        if self.verify:
+            self.verify.close()
+        self.w.close()
+
+
+def run(cfg: dict, workdir: str, limit: int | None = None) -> str:
+    # limit áp ở cấp file nguồn (s0-s2); stage segment-level xử lý toàn bộ
+    records = manifest.read_records(manifest.manifest_path(workdir, PREV))
+    mpath = manifest.manifest_path(workdir, STAGE)
+    todo = [r for r in records if r["id"] not in manifest.done_ids(mpath)]
+    print(f"[{STAGE}] {len(todo)}/{len(records)} segment cần transcribe")
+    if not todo:
+        return mpath
+    worker = Worker(cfg, workdir)
+    worker.process(todo)
+    worker.close()
     print(f"[{STAGE}] xong")
     return mpath

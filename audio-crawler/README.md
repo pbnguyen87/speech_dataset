@@ -127,6 +127,12 @@ python tools/crawl_and_process.py --config config/sources.yaml --out ./raw \
   s8, nhưng segment đã là C thì không quay lại được.
 - Mỗi lô khởi động lại model của s1/s4/s5, nên với podcast tập ngắn nên đặt
   `--batch 20` trở lên; với file dài 10 giờ thì `--batch 1` là hợp lý.
+- `--stream`: thay toàn bộ cơ chế lô bằng `python -m pipeline serve` — 8 stage
+  của pipeline chạy song song, mỗi stage một tiến trình, quét thẳng thư mục
+  `--out`, model nạp một lần, GPU không nghỉ giữa các lô. Crawler xong thì
+  script tạo `<workdir>/INPUT_DONE`; bị kill thì chạy lại lệnh cũ là tiếp tục
+  (dấu "đã làm" là dòng manifest của từng stage). `--batch/--stages/--poll`
+  không dùng trong chế độ này. Xem README của audio-pipeline, mục "Chế độ stream".
 
 ## Cơ chế
 

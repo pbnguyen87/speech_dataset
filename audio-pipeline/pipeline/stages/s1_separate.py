@@ -13,6 +13,7 @@ import sys
 import tempfile
 
 from .. import audio_utils, device as device_mod, manifest
+from ..gpulock import gpu_lock, wants_lock
 
 STAGE = "s1_separate"
 PREV = "s0_ingest"
@@ -56,53 +57,71 @@ def _music_ratio(src: str, sample_s: int, model: str, dev: str, sr: int) -> floa
     return acc_rms / total_rms
 
 
-def run(cfg: dict, workdir: str, limit: int | None = None) -> str:
-    scfg = cfg["separate"]
-    enabled = scfg["enabled"]
-    sr = cfg["ingest"]["target_sr"]
-    records = manifest.read_records(manifest.manifest_path(workdir, PREV), limit)
-    mpath = manifest.manifest_path(workdir, STAGE)
+class Worker:
+    batch_n = 1
+    flush_s = 0
 
-    if enabled is False:
-        with manifest.ManifestWriter(mpath) as w:
-            for rec in records:
-                if not w.is_done(rec["id"]):
-                    w.write({**rec, "separated": False})
-        print(f"[{STAGE}] tắt — pass-through {len(records)} file")
-        return mpath
+    def __init__(self, cfg: dict, workdir: str):
+        self.scfg = cfg["separate"]
+        self.enabled = self.scfg["enabled"]
+        self.sr = cfg["ingest"]["target_sr"]
+        self.workdir = workdir
+        self.lock = wants_lock(cfg)
+        self.w = manifest.ManifestWriter(manifest.manifest_path(workdir, STAGE))
+        if self.enabled is not False:
+            self.dev = device_mod.resolve(cfg["device"])
+            self.model = self.scfg["model"]
+            self.out_audio = manifest.audio_dir(workdir, STAGE)
+            print(f"[{STAGE}] mode={self.enabled} model={self.model} device={self.dev}")
+        else:
+            print(f"[{STAGE}] tắt — pass-through")
 
-    dev = device_mod.resolve(cfg["device"])
-    model = scfg["model"]
-    out_audio = manifest.audio_dir(workdir, STAGE)
-    print(f"[{STAGE}] mode={enabled} model={model} device={dev}, {len(records)} file")
+    def is_done(self, rec: dict) -> bool:
+        return self.w.is_done(rec["id"])
 
-    with manifest.ManifestWriter(mpath) as w:
+    def ready(self, pending: list, upstream_done: bool):
+        return pending, []
+
+    def process(self, records: list[dict]) -> None:
         for i, rec in enumerate(records):
-            if w.is_done(rec["id"]):
+            if self.w.is_done(rec["id"]):
+                continue
+            if self.enabled is False:
+                self.w.write({**rec, "separated": False})
                 continue
             src = rec["audio_path"]
-
-            need_sep = True
-            ratio = None
-            if enabled == "auto":
+            need_sep, ratio = True, None
+            if self.enabled == "auto":
                 try:
-                    ratio = _music_ratio(src, scfg["auto_sample_seconds"], model, dev, sr)
-                    need_sep = ratio >= scfg["auto_music_ratio"]
+                    with gpu_lock(self.workdir, self.lock):
+                        ratio = _music_ratio(src, self.scfg["auto_sample_seconds"], self.model, self.dev, self.sr)
+                    need_sep = ratio >= self.scfg["auto_music_ratio"]
                 except Exception as e:
                     print(f"  auto-detect lỗi ({rec['id']}): {e} — chạy demucs full")
 
             if not need_sep:
-                w.write({**rec, "separated": False, "music_ratio": ratio})
+                self.w.write({**rec, "separated": False, "music_ratio": ratio})
                 print(f"  [{i+1}/{len(records)}] {rec['id']}: sạch (ratio={ratio:.3f}), bỏ qua demucs")
                 continue
 
-            dst = os.path.join(out_audio, f"{rec['id']}.wav")
+            dst = os.path.join(self.out_audio, f"{rec['id']}.wav")
             with tempfile.TemporaryDirectory() as td:
-                vocals = _run_demucs(src, td, model, dev)
+                with gpu_lock(self.workdir, self.lock):
+                    vocals = _run_demucs(src, td, self.model, self.dev)
                 # demucs xuất 44.1k stereo -> đưa về chuẩn pipeline
-                audio_utils.ffmpeg_to_wav(vocals, dst, sr)
-            w.write({**rec, "audio_path": dst, "separated": True, "music_ratio": ratio})
+                audio_utils.ffmpeg_to_wav(vocals, dst, self.sr)
+            self.w.write({**rec, "audio_path": dst, "separated": True, "music_ratio": ratio})
             print(f"  [{i+1}/{len(records)}] {rec['id']}: đã tách vocal")
 
+    def close(self) -> None:
+        self.w.close()
+
+
+def run(cfg: dict, workdir: str, limit: int | None = None) -> str:
+    records = manifest.read_records(manifest.manifest_path(workdir, PREV), limit)
+    worker = Worker(cfg, workdir)
+    print(f"[{STAGE}] {len(records)} file")
+    worker.process(records)
+    worker.close()
     print(f"[{STAGE}] xong")
-    return mpath
+    return manifest.manifest_path(workdir, STAGE)

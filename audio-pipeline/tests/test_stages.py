@@ -14,7 +14,7 @@ from pipeline.stages.s3_quality import bandwidth_hz, clipping_ratio, estimate_sn
 from pipeline.stages.s5_transcribe import cer
 from pipeline.stages.s6_textnorm import basic_normalize, number_to_words_vi
 from pipeline.stages.s7_loudnorm import peak_normalize
-from pipeline.stages.s8_package import assign_split, assign_tier, keep_record
+from pipeline.stages.s8_package import assign_split, assign_tier, keep_record, normalize_source_path
 
 TIERS = {
     "A": {"max_cer": 0.05, "min_snr_db": 20.0, "min_dnsmos": 3.0,
@@ -201,3 +201,16 @@ class TestVerifyBatched:
         asr, _ = self._asr(fail_on="p1")
         out = transcribe_batched(asr, {f"s{i}": f"p{i}" for i in range(3)}, 3)
         assert out == {"s0": "p0", "s1": None, "s2": "p2"}
+
+
+class TestNormalizeSourcePath:
+    def test_staging_name_to_feed_path(self):
+        assert normalize_source_path("vi-podcast__vnexpress.net_rss_podcast_ban-on-khong.rss__Tập_1.mp3") \
+            == "vnexpress.net_rss_podcast_ban-on-khong.rss/Tập_1.mp3"
+        assert normalize_source_path("vi-podcast__Tập_1.mp3") == "Tập_1.mp3"  # trước khi có thư mục theo feed
+
+    def test_stream_path_unchanged(self):
+        assert normalize_source_path("vnexpress.net_rss_podcast_ban-on-khong.rss/Tập_1.mp3") \
+            == "vnexpress.net_rss_podcast_ban-on-khong.rss/Tập_1.mp3"
+        assert normalize_source_path("a/b__c.mp3") == "a/b__c.mp3"
+        assert normalize_source_path(None) is None

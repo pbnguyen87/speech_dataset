@@ -73,3 +73,30 @@ class ManifestWriter:
 
     def __exit__(self, *exc):
         self.close()
+
+
+class ManifestTail:
+    """Đọc dần một manifest đang được stage khác ghi (chế độ stream).
+
+    Nhớ offset byte; dòng chưa có '\\n' là dòng ghi dở -> để lần sau. File chưa tồn tại
+    coi như rỗng. Đọc ở chế độ nhị phân để offset là byte thật."""
+
+    def __init__(self, path: str):
+        self.path = path
+        self.offset = 0
+
+    def poll(self) -> list[dict]:
+        if not os.path.exists(self.path):
+            return []
+        out = []
+        with open(self.path, "rb") as f:
+            f.seek(self.offset)
+            while True:
+                line = f.readline()
+                if not line or not line.endswith(b"\n"):
+                    break
+                self.offset += len(line)
+                s = line.decode("utf-8").strip()
+                if s:
+                    out.append(json.loads(s))
+        return out

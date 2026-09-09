@@ -15,6 +15,8 @@ Cơ chế:
     chia split, xuất dataset) một lần trên toàn bộ workdir.
   * `<workdir>/processed_files.jsonl` ghi file đã qua pipeline; chạy lại script
     bỏ qua phần đã làm. `--no-crawl` chỉ xử lý ledger có sẵn, không crawl.
+  * `--stream`: thay toàn bộ cơ chế lô bằng `python -m pipeline serve` — 8 stage chạy
+    song song, quét thẳng thư mục raw; crawler xong thì script tạo `<workdir>/INPUT_DONE`.
   * `--cleanup`: tiết kiệm đĩa — sau mỗi lô xóa audio gốc trong raw/ (giữ sidecar
     + ledger) và wav trung gian s0/s1/s2 của lô; sau s8 xóa wav s7 của segment
     tier C. Wav s7 của tier A/B phải giữ vì s8 xây lại dataset từ đó mỗi lần chạy.
@@ -159,6 +161,44 @@ def cleanup_tier_c(workdir: str) -> int:
     return n
 
 
+# ------------------------------------------------------------------ chế độ stream
+def run_stream(pipeline_dir: str, raw_dir: str, workdir: str, crawler, configs: list[str],
+               device: str | None, cleanup: bool) -> int:
+    """Pipeline serve quét thẳng raw_dir (không cần staging/ledger); crawler xong -> tạo
+    <workdir>/INPUT_DONE để s0 biết không còn file mới. Ctrl-C: tắt cả hai, chạy lại là resume."""
+    cmd = [pipeline_python(pipeline_dir), "-m", "pipeline", "serve",
+           "--raw-dir", raw_dir, "--workdir", workdir]
+    if configs:
+        default_cfg = os.path.join(pipeline_dir, "config", "default.yaml")
+        for c in [default_cfg] + list(configs):
+            cmd += ["--config", os.path.abspath(c)]
+    if device:
+        cmd += ["--device", device]
+    if cleanup:
+        cmd += ["--cleanup"]
+    if crawler is None:
+        cmd += ["--input-done"]
+    serve = subprocess.Popen(cmd, cwd=pipeline_dir)
+    print(f"[pipeline] serve pid {serve.pid} (8 stage song song)", flush=True)
+    try:
+        if crawler is not None:
+            crawler.wait()
+            print(f"[crawler] xong (mã {crawler.returncode}) -> báo pipeline không còn file mới", flush=True)
+            os.makedirs(workdir, exist_ok=True)
+            with open(os.path.join(workdir, "INPUT_DONE"), "w") as f:
+                f.write(time.strftime("%Y-%m-%d %H:%M:%S") + "\n")
+        return serve.wait()
+    except KeyboardInterrupt:
+        print("\n[dừng] Ctrl-C — tắt crawler và pipeline; chạy lại lệnh cũ để tiếp tục", flush=True)
+        for p in (crawler, serve):
+            if p is not None and p.poll() is None:
+                p.terminate()
+        for p in (crawler, serve):
+            if p is not None:
+                p.wait()
+        return 130
+
+
 # ------------------------------------------------------------------ main loop
 def main(argv=None):
     ap = argparse.ArgumentParser(description="Crawl + đưa ngay từng file vào audio-pipeline")
@@ -178,14 +218,15 @@ def main(argv=None):
     ap.add_argument("--poll", type=float, default=3.0, help="giây giữa 2 lần đọc ledger")
     ap.add_argument("--cleanup", action="store_true",
                     help="xóa audio gốc + wav trung gian sau khi xử lý; sau s8 xóa wav tier C (giữ tier A/B)")
+    ap.add_argument("--stream", action="store_true",
+                    help="pipeline chạy 8 stage song song (python -m pipeline serve) thay vì theo lô; "
+                         "--batch/--stages/--final-stages/--poll không dùng")
     args = ap.parse_args(argv)
 
     pipeline_dir = os.path.abspath(args.pipeline_dir)
     if not os.path.isdir(os.path.join(pipeline_dir, "pipeline")):
         sys.exit(f"Không thấy audio-pipeline tại {pipeline_dir} (--pipeline-dir)")
     workdir = os.path.abspath(args.workdir)
-    processed = Processed(workdir)
-    tail = LedgerTail(os.path.abspath(args.out))
 
     crawler = None
     if not args.no_crawl:
@@ -196,6 +237,13 @@ def main(argv=None):
             cmd += ["--limit", str(args.limit)]
         crawler = subprocess.Popen(cmd, cwd=CRAWLER_ROOT)
         print(f"[crawler] pid {crawler.pid}", flush=True)
+
+    if args.stream:
+        sys.exit(run_stream(pipeline_dir, os.path.abspath(args.out), workdir, crawler,
+                            args.pipeline_config, args.device, args.cleanup))
+
+    processed = Processed(workdir)
+    tail = LedgerTail(os.path.abspath(args.out))
 
     queue: list[dict] = []
     n_ok = n_fail = 0

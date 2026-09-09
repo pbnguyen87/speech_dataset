@@ -66,33 +66,52 @@ def basic_normalize(text: str) -> str:
     return text.strip()
 
 
-def run(cfg: dict, workdir: str, limit: int | None = None) -> str:
+def pick_backend(cfg: dict):
+    """Trả (hàm chuẩn hóa, tên backend) theo textnorm.backend: vinorm | basic | auto."""
     backend = cfg["textnorm"]["backend"]
-    norm_fn = None
     if backend in ("vinorm", "auto"):
         try:
             from vinorm import TTSnorm
 
-            norm_fn = lambda t: TTSnorm(t).strip()  # noqa: E731
-            backend = "vinorm"
+            return (lambda t: TTSnorm(t).strip()), "vinorm"
         except ImportError:
             if backend == "vinorm":
                 raise SystemExit("textnorm.backend=vinorm nhưng chưa cài vinorm")
-            backend = "basic"
-    if norm_fn is None:
-        norm_fn = basic_normalize
-        backend = "basic"
+    return basic_normalize, "basic"
 
-    records = manifest.read_records(manifest.manifest_path(workdir, PREV))
-    mpath = manifest.manifest_path(workdir, STAGE)
-    print(f"[{STAGE}] backend={backend}, {len(records)} segment")
 
-    with manifest.ManifestWriter(mpath) as w:
+class Worker:
+    batch_n = 1
+    flush_s = 0
+
+    def __init__(self, cfg: dict, workdir: str):
+        self.norm_fn, self.backend = pick_backend(cfg)
+        self.w = manifest.ManifestWriter(manifest.manifest_path(workdir, STAGE))
+        print(f"[{STAGE}] backend={self.backend}")
+
+    def is_done(self, rec: dict) -> bool:
+        return self.w.is_done(rec["id"])
+
+    def ready(self, pending: list, upstream_done: bool):
+        return pending, []
+
+    def process(self, records: list[dict]) -> None:
         for rec in records:
-            if w.is_done(rec["id"]):
+            if self.w.is_done(rec["id"]):
                 continue
-            w.write({**rec,
-                     "text_normalized": norm_fn(rec.get("text") or ""),
-                     "textnorm_backend": backend})
+            self.w.write({**rec,
+                          "text_normalized": self.norm_fn(rec.get("text") or ""),
+                          "textnorm_backend": self.backend})
+
+    def close(self) -> None:
+        self.w.close()
+
+
+def run(cfg: dict, workdir: str, limit: int | None = None) -> str:
+    records = manifest.read_records(manifest.manifest_path(workdir, PREV))
+    worker = Worker(cfg, workdir)
+    print(f"[{STAGE}] {len(records)} segment")
+    worker.process(records)
+    worker.close()
     print(f"[{STAGE}] xong")
-    return mpath
+    return manifest.manifest_path(workdir, STAGE)

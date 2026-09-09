@@ -1,6 +1,11 @@
-"""s2: silero-VAD tìm vùng có tiếng nói, gộp thành segment min–max giây."""
+"""s2: silero-VAD tìm vùng có tiếng nói, gộp thành segment min–max giây.
+
+Mỗi segment ghi kèm n_segments của file nguồn -> stage sau (s4) biết khi nào đã nhận đủ
+segment của một file; resume theo file: file xong khi số segment trong manifest == n_segments.
+"""
 
 import os
+from collections import Counter
 
 from .. import audio_utils, manifest
 
@@ -42,48 +47,72 @@ def merge_speech_chunks(chunks: list[dict], min_s: float, max_s: float,
     return out
 
 
-def run(cfg: dict, workdir: str, limit: int | None = None) -> str:
-    from silero_vad import get_speech_timestamps, load_silero_vad, read_audio
+def done_files(mpath: str) -> set[str]:
+    """file_id đã có đủ segment (count == n_segments; manifest cũ không có n_segments -> coi là xong)."""
+    count: Counter = Counter()
+    expected: dict = {}
+    for r in manifest.iter_records(mpath):
+        count[r["file_id"]] += 1
+        expected[r["file_id"]] = r.get("n_segments")
+    return {f for f, n in count.items() if expected[f] is None or n >= expected[f]}
 
-    scfg = cfg["segment"]
-    vad_sr = scfg["vad_sr"]
-    sr = cfg["ingest"]["target_sr"]
-    records = manifest.read_records(manifest.manifest_path(workdir, PREV), limit)
-    out_audio = manifest.audio_dir(workdir, STAGE)
-    mpath = manifest.manifest_path(workdir, STAGE)
 
-    model = load_silero_vad()
-    print(f"[{STAGE}] {len(records)} file")
+class Worker:
+    batch_n = 1
+    flush_s = 0
 
-    # resume theo file_id (mỗi file sinh nhiều segment, ghi marker khi xong cả file)
-    done_files = {r["file_id"] for r in manifest.iter_records(mpath)}
+    def __init__(self, cfg: dict, workdir: str):
+        from silero_vad import load_silero_vad
 
-    with manifest.ManifestWriter(mpath) as w:
+        self.scfg = cfg["segment"]
+        self.vad_sr = self.scfg["vad_sr"]
+        self.sr = cfg["ingest"]["target_sr"]
+        self.cleanup = bool(cfg.get("stream", {}).get("cleanup"))
+        self.workdir = workdir
+        self.out_audio = manifest.audio_dir(workdir, STAGE)
+        mpath = manifest.manifest_path(workdir, STAGE)
+        self.done_files = done_files(mpath)
+        self.w = manifest.ManifestWriter(mpath)
+        self.model = load_silero_vad()
+
+    def is_done(self, rec: dict) -> bool:
+        return rec["id"] in self.done_files
+
+    def ready(self, pending: list, upstream_done: bool):
+        return pending, []
+
+    def process(self, records: list[dict]) -> None:
+        from silero_vad import get_speech_timestamps, read_audio
+
         for i, rec in enumerate(records):
-            if rec["id"] in done_files:
+            if rec["id"] in self.done_files:
                 continue
-            wav16 = read_audio(rec["audio_path"], sampling_rate=vad_sr)
+            wav16 = read_audio(rec["audio_path"], sampling_rate=self.vad_sr)
             ts = get_speech_timestamps(
-                wav16, model, sampling_rate=vad_sr,
-                min_silence_duration_ms=scfg["min_silence_ms"],
+                wav16, self.model, sampling_rate=self.vad_sr,
+                min_silence_duration_ms=self.scfg["min_silence_ms"],
                 speech_pad_ms=0, return_seconds=True,
             )
             segs = merge_speech_chunks(
-                ts, scfg["min_seconds"], scfg["max_seconds"],
-                pad_s=scfg["speech_pad_ms"] / 1000.0,
+                ts, self.scfg["min_seconds"], self.scfg["max_seconds"],
+                pad_s=self.scfg["speech_pad_ms"] / 1000.0,
             )
 
-            x, _ = audio_utils.load_wav(rec["audio_path"], sr)
-            for s, e in segs:
-                a, b = int(s * sr), min(int(e * sr), len(x))
+            x, _ = audio_utils.load_wav(rec["audio_path"], self.sr)
+            for k, (s, e) in enumerate(segs):
                 seg_id = f"{rec['id']}_{int(s*1000):08d}_{int(e*1000):08d}"
-                seg_path = os.path.join(out_audio, f"{seg_id}.wav")
-                audio_utils.save_wav(seg_path, x[a:b], sr)
-                w.write({
+                if self.w.is_done(seg_id):  # resume giữa file: chỉ cắt phần còn thiếu
+                    continue
+                a, b = int(s * self.sr), min(int(e * self.sr), len(x))
+                seg_path = os.path.join(self.out_audio, f"{seg_id}.wav")
+                audio_utils.save_wav(seg_path, x[a:b], self.sr)
+                self.w.write({
                     "id": seg_id,
                     "file_id": rec["id"],
+                    "seg_index": k,
+                    "n_segments": len(segs),
                     "audio_path": seg_path,
-                    "sr": sr,
+                    "sr": self.sr,
                     "start": round(s, 3),
                     "end": round(e, 3),
                     "duration": round(e - s, 3),
@@ -91,8 +120,24 @@ def run(cfg: dict, workdir: str, limit: int | None = None) -> str:
                     "source_meta": rec.get("source_meta"),
                     "separated": rec.get("separated"),
                 })
+            self.done_files.add(rec["id"])
+            if self.cleanup:  # s2 là stage cuối đọc wav s0/s1 của file này
+                for stage in ("s0_ingest", "s1_separate"):
+                    p = os.path.join(self.workdir, stage, "audio", f"{rec['id']}.wav")
+                    if os.path.exists(p):
+                        os.remove(p)
             print(f"  [{i+1}/{len(records)}] {rec['id']}: {len(segs)} segment")
 
-    n = len(manifest.read_records(mpath))
-    print(f"[{STAGE}] xong: {n} segment")
+    def close(self) -> None:
+        self.w.close()
+
+
+def run(cfg: dict, workdir: str, limit: int | None = None) -> str:
+    records = manifest.read_records(manifest.manifest_path(workdir, PREV), limit)
+    worker = Worker(cfg, workdir)
+    print(f"[{STAGE}] {len(records)} file")
+    worker.process(records)
+    worker.close()
+    mpath = manifest.manifest_path(workdir, STAGE)
+    print(f"[{STAGE}] xong: {len(manifest.read_records(mpath))} segment")
     return mpath
