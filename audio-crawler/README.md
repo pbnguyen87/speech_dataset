@@ -133,6 +133,10 @@ python tools/crawl_and_process.py --config config/sources.yaml --out ./raw \
   script tạo `<workdir>/INPUT_DONE`; bị kill thì chạy lại lệnh cũ là tiếp tục
   (dấu "đã làm" là dòng manifest của từng stage). `--batch/--stages/--poll`
   không dùng trong chế độ này. Xem README của audio-pipeline, mục "Chế độ stream".
+- `--min-free-gb N` (mặc định 20, cả hai chế độ): đĩa chứa `--out` trống dưới N GB
+  thì script tạo `<out>/PAUSE`, crawler ngừng tải trước tập kế tiếp (in `[tạm dừng]`),
+  pipeline vẫn chạy và giải phóng đĩa; trống lại trên 1.5N GB thì gỡ. Chạy crawler
+  tay cũng dừng được bằng `touch <out>/PAUSE`.
 
 ## Cơ chế
 

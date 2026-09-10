@@ -36,16 +36,19 @@ def _run_demucs(src: str, out_dir: str, model: str, dev: str) -> str:
 
 
 def separate_vocals(src: str, dst: str, model: str, dev: str, sr: int, chunk_s: float,
-                    lock_ctx=None) -> None:
+                    lock_ctx=None, tmp_dir: str | None = None) -> None:
     """Tách vocal của cả file -> dst (wav mono sr). File dài hơn chunk_s được cắt thành
     từng khúc chunk_s giây, demucs chạy từng khúc rồi nối lại: demucs nạp NGUYÊN file vào
     RAM (10 giờ 44.1k stereo float32 = 12.7 GB + các stem) nên file dài bị OOM killer (mã -9).
-    lock_ctx: callable trả context manager (khóa GPU) bọc mỗi lần chạy demucs."""
+    lock_ctx: callable trả context manager (khóa GPU) bọc mỗi lần chạy demucs.
+    tmp_dir: nơi chứa file tạm (mặc định /tmp — trên Linux thường là tmpfs nhỏ, file
+    hàng GB sẽ hết chỗ -> ffmpeg mã 228/ENOSPC); Worker truyền <workdir>/_tmp."""
     import contextlib
+    import shutil
 
     lock_ctx = lock_ctx or contextlib.nullcontext
     dur = audio_utils.duration_seconds(src)
-    with tempfile.TemporaryDirectory() as td:
+    with tempfile.TemporaryDirectory(dir=tmp_dir) as td:
         if dur <= chunk_s:
             with lock_ctx():
                 vocals = _run_demucs(src, td, model, dev)
@@ -56,17 +59,19 @@ def separate_vocals(src: str, dst: str, model: str, dev: str, sr: int, chunk_s: 
         for i in range(n):
             piece = os.path.join(td, f"p{i:04d}.wav")
             audio_utils.ffmpeg_cut(src, piece, i * chunk_s, chunk_s)
+            ddir = os.path.join(td, f"d{i:04d}")
             with lock_ctx():
-                vocals = _run_demucs(piece, os.path.join(td, f"d{i:04d}"), model, dev)
+                vocals = _run_demucs(piece, ddir, model, dev)
             conv = os.path.join(td, f"v{i:04d}.wav")
             audio_utils.ffmpeg_to_wav(vocals, conv, sr)
             parts.append(conv)
             os.remove(piece)
-            os.remove(vocals)
+            shutil.rmtree(ddir, ignore_errors=True)  # cả vocals lẫn no_vocals 44.1k stereo (~1.3 GB/2h mỗi file)
         audio_utils.ffmpeg_concat(parts, dst)
 
 
-def _music_ratio(src: str, sample_s: int, model: str, dev: str, sr: int) -> float:
+def _music_ratio(src: str, sample_s: int, model: str, dev: str, sr: int,
+                 tmp_dir: str | None = None) -> float:
     """Cắt mẫu giữa file, tách thử, đo RMS(no_vocals)/RMS(tổng)."""
     import numpy as np
 
@@ -75,7 +80,7 @@ def _music_ratio(src: str, sample_s: int, model: str, dev: str, sr: int) -> floa
     start = max(0, int((dur / 2 - sample_s / 2) * sr))
     sample = x[start:start + sample_s * sr]
 
-    with tempfile.TemporaryDirectory() as td:
+    with tempfile.TemporaryDirectory(dir=tmp_dir) as td:
         spath = os.path.join(td, "sample.wav")
         audio_utils.save_wav(spath, sample, sr)
         _run_demucs(spath, td, model, dev)
@@ -98,6 +103,8 @@ class Worker:
         self.sr = cfg["ingest"]["target_sr"]
         self.chunk_s = float(self.scfg.get("chunk_seconds", 7200))
         self.workdir = workdir
+        self.tmp_dir = os.path.join(workdir, "_tmp")  # file tạm hàng GB: để cùng đĩa với workdir, không dùng /tmp
+        os.makedirs(self.tmp_dir, exist_ok=True)
         self.lock = wants_lock(cfg)
         self.w = manifest.ManifestWriter(manifest.manifest_path(workdir, STAGE))
         if self.enabled is not False:
@@ -126,7 +133,8 @@ class Worker:
             if self.enabled == "auto":
                 try:
                     with gpu_lock(self.workdir, self.lock):
-                        ratio = _music_ratio(src, self.scfg["auto_sample_seconds"], self.model, self.dev, self.sr)
+                        ratio = _music_ratio(src, self.scfg["auto_sample_seconds"], self.model, self.dev,
+                                             self.sr, tmp_dir=self.tmp_dir)
                     need_sep = ratio >= self.scfg["auto_music_ratio"]
                 except Exception as e:
                     print(f"  auto-detect lỗi ({rec['id']}): {e} — chạy demucs full")
@@ -138,7 +146,7 @@ class Worker:
 
             dst = os.path.join(self.out_audio, f"{rec['id']}.wav")
             separate_vocals(src, dst, self.model, self.dev, self.sr, self.chunk_s,
-                            lock_ctx=lambda: gpu_lock(self.workdir, self.lock))
+                            lock_ctx=lambda: gpu_lock(self.workdir, self.lock), tmp_dir=self.tmp_dir)
             self.w.write({**rec, "audio_path": dst, "separated": True, "music_ratio": ratio})
             print(f"  [{i+1}/{len(records)}] {rec['id']}: đã tách vocal")
 

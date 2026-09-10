@@ -119,6 +119,7 @@ python -m pipeline serve --raw-dir raw --workdir work --input-done [--cleanup]
 touch work/INPUT_DONE            # (tools/crawl_and_process.py --stream tự làm việc này)
 
 python -m pipeline status --workdir work   # số dòng manifest + cờ DONE từng stage
+python -m pipeline cleanup --workdir work --raw-dir raw [--dry-run]   # dọn đĩa hồi tố theo cùng quy tắc --cleanup
 ```
 
 Mỗi stage s0–s7 là một tiến trình riêng, nạp model một lần cho cả run. Stage sN

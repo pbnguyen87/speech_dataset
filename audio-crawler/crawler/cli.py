@@ -8,6 +8,7 @@ import argparse
 import itertools
 import os
 import shutil
+import time
 
 import yaml
 
@@ -18,6 +19,20 @@ from .state import Ledger
 def needs_probe(known_duration: float | None, max_seconds: float) -> bool:
     """Bỏ qua ffprobe khi nguồn đã khai thời lượng và nó dưới ngưỡng cắt."""
     return known_duration is None or known_duration > max_seconds
+
+
+PAUSE_FILE = "PAUSE"  # <--out>/PAUSE tồn tại -> crawler ngừng tải (wrapper tạo khi đĩa sắp đầy)
+PAUSE_POLL_S = 5.0
+
+
+def wait_if_paused(out_root: str) -> None:
+    path = os.path.join(out_root, PAUSE_FILE)
+    if not os.path.exists(path):
+        return
+    print(f"  [tạm dừng] có {path} — chờ pipeline giải phóng đĩa...", flush=True)
+    while os.path.exists(path):
+        time.sleep(PAUSE_POLL_S)
+    print("  [tiếp tục] hết tạm dừng", flush=True)
 
 
 def crawl_source(cfg: dict, out_root: str, limit: int | None) -> None:
@@ -58,6 +73,7 @@ def crawl_source(cfg: dict, out_root: str, limit: int | None) -> None:
             key = item.get("key", item["url"])  # key ổn định nếu adapter cung cấp
             if ledger.has(key):
                 continue
+            wait_if_paused(out_root)
             ext, extra = downloader.ext_from_url(item["url"]), {}
             trim = False
             if max_seconds and needs_probe(item.get("duration"), max_seconds):

@@ -114,6 +114,7 @@ Tham số:
 | `--config config/vi_podcast.yaml` | 1 source `rss`, `urls_file: podcast_feeds_2h.txt` (1694 feed), `max_hours: 10` |
 | `--stream` | pipeline chạy 8 stage song song (`python -m pipeline serve`), model nạp một lần, GPU không nghỉ; bị kill chạy lại là tiếp (xem bên dưới) |
 | `--cleanup` | xóa audio gốc ngay khi s0 xong, wav trung gian ngay khi stage cuối dùng xong; sau s8 xóa wav tier C |
+| `--min-free-gb 20` | đĩa chứa `--out` trống dưới 20 GB thì tạo `$OUT/raw/PAUSE`, crawler ngừng tải trước tập kế cho pipeline giải phóng; trống lại trên 30 GB thì gỡ. 0 = tắt |
 | `--source X` | chỉ chạy source tên X |
 | `--limit N` | mỗi source chỉ N item đầu (chạy thử) |
 | `--no-crawl` | không crawl, chỉ xử lý ledger có sẵn |
@@ -183,8 +184,12 @@ $OUT/
 - Feed đầu danh sách là "Truyện Audio Sưu Tầm" (790 tập × 10 giờ = 7.900 giờ, 1
   giọng/tập). Muốn đa dạng giọng sớm thì đảo thứ tự dòng trong file txt
   (`shuf`).
-- Crawler tải nhanh hơn pipeline xử lý, `raw/` sẽ phình rồi giảm khi cleanup.
-  Đĩa hạn chế thì tăng `delay_s` trong `config/vi_podcast.yaml` hoặc crawl từng phần.
+- Crawler tải nhanh hơn pipeline xử lý nhiều lần. Dữ liệu đang chờ nằm ở stage nút
+  thắt (s5) dưới dạng wav s2, khoảng 170 MB mỗi giờ audio, cộng raw chưa qua s0.
+  `--min-free-gb` (mặc định 20) tự tạm dừng crawler khi đĩa sắp đầy; muốn giữ
+  đĩa dư nhiều hơn thì tăng lên. Đĩa đã đầy giữa chừng: dừng, chạy
+  `../audio-pipeline/.venv/bin/python -m pipeline cleanup --workdir $OUT/work --raw-dir $OUT/raw`
+  (thêm `--dry-run` để xem trước) rồi chạy lại với `--cleanup`.
 - Đã xóa raw thì không chạy lại được s0-s2 cho file đó (muốn thì xóa dòng
   tương ứng trong ledger để crawler tải lại và dòng trong `s0_ingest/manifest.jsonl`). Segment tier C đã xóa không quay
   lại được khi nới ngưỡng tier — muốn thử ngưỡng, chạy mẫu nhỏ không `--cleanup`.
@@ -197,6 +202,7 @@ $OUT/
 | `[s5] ... OOM, giảm batch_size -> N` lặp lại mỗi lô | đặt `transcribe.primary.batch_size` / `transcribe.verify.batch_size` = N trong config pipeline (16 GB: 32/32; 24 GB: 64/48) |
 | `TorchCodec is required for save_with_torchcodec` (demucs, s1) | torchaudio >= 2.9; cài lại đúng mục 2: `torch==2.8.0 torchaudio==2.8.0` |
 | `demucs lỗi (mã -9)` | OOM killer hết RAM hệ thống (`dmesg -T \| grep -i killed`): demucs nạp cả khúc vào RAM, ~10 GB cho khúc 2 giờ; hạ `separate.chunk_seconds` (vd 1800) trong config pipeline |
+| `CalledProcessError ... ffmpeg ... exit status 228` | ENOSPC, hết đĩa: `df -h /tmp $OUT`. File tạm của s1 nằm ở `$OUT/work/_tmp` (không dùng /tmp); đĩa $OUT đầy thì `python -m pipeline cleanup` (mục 8) rồi chạy lại với `--cleanup --min-free-gb` |
 | `demucs lỗi (mã N)` kèm stderr | đọc stderr in ngay sau: thiếu mạng tải model htdemucs, thiếu ffmpeg, hoặc CUDA OOM |
 | `[serve] sN thoát mã ... khởi động lại (k/5)` | stage chết, xem traceback ngay trước dòng đó; hết 5 lần thì serve dừng, sửa rồi chạy lại |
 | Crawler tải nguyên tập dài hàng chục giờ | thiếu `ffprobe`/`ffmpeg` trong PATH của venv crawler; bản hiện tại dừng ngay và báo, cài ffmpeg rồi chạy lại |

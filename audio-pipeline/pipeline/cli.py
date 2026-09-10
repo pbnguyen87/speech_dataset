@@ -1,6 +1,7 @@
 """CLI: python -m pipeline run   --raw-dir ./raw --workdir ./work [--stages s0-s8]   # tuần tự theo lô
      python -m pipeline serve --raw-dir ./raw --workdir ./work [--input-done]      # 8 stage song song
      python -m pipeline status --workdir ./work
+     python -m pipeline cleanup --workdir ./work --raw-dir ./raw [--dry-run]   # dọn đĩa hồi tố
 
 Mỗi stage được chạy trong một SUBPROCESS riêng (qua pipeline.stage_runner):
 torch (s1/s4/s5-verify) và ctranslate2 (s5-primary) cùng nhúng OpenMP runtime,
@@ -77,12 +78,21 @@ def main(argv=None):
     p = sub.add_parser("status", help="số dòng manifest + cờ DONE của từng stage")
     p.add_argument("--workdir", required=True)
 
+    p = sub.add_parser("cleanup", help="dọn đĩa hồi tố: xóa raw/wav trung gian mà stage sau đã xử lý xong")
+    p.add_argument("--workdir", required=True)
+    p.add_argument("--raw-dir", help="có thì xóa cả audio raw đã qua s0 (giữ sidecar .json)")
+    p.add_argument("--dry-run", action="store_true", help="chỉ tính dung lượng, không xóa")
+
     args = parser.parse_args(argv)
 
     import os
     if args.cmd == "status":
         from .stream import status_line
         print(status_line(args.workdir))
+        return
+    if args.cmd == "cleanup":
+        from .cleanup import run as cleanup_run
+        cleanup_run(args.workdir, args.raw_dir, args.dry_run)
         return
 
     default_cfg = os.path.join(os.path.dirname(__file__), "..", "config", "default.yaml")

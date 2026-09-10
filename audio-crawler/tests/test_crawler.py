@@ -317,3 +317,18 @@ class TestFeedByFeed:
 
     def test_rss_package_exports_iter_items(self):
         assert callable(getattr(sources.get("rss"), "iter_items", None))
+
+
+class TestPauseFile:
+    def test_crawl_waits_while_pause_file_exists(self, monkeypatch, tmp_path):
+        import threading
+        from crawler import cli, sources as srcs
+        monkeypatch.setattr(srcs, "get", lambda t: type("A", (), {"list_items": staticmethod(
+            lambda cfg: [{"url": "https://x/a.mp3", "title": "a"}])}))
+        monkeypatch.setattr(downloader, "download", lambda url, dest, **k: open(dest, "wb").close() or True)
+        monkeypatch.setattr(cli, "PAUSE_POLL_S", 0.05)
+        pause = tmp_path / "PAUSE"; pause.write_text("")
+        threading.Timer(0.3, pause.unlink).start()
+        import time; t = time.time()
+        cli.crawl_source({"name": "s", "type": "x", "delay_s": 0}, str(tmp_path), None)
+        assert time.time() - t >= 0.25 and (tmp_path / "s" / "a.mp3").exists()

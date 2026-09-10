@@ -107,3 +107,22 @@ class TestCleanup:
         assert cap.cleanup_tier_c(str(w)) == 1
         assert not (w / "s7_loudnorm/audio/c1.wav").exists()
         assert (w / "s7_loudnorm/audio/a1.wav").exists() and outside.exists()
+
+
+class TestDiskGuard:
+    def test_pause_file_follows_free_space(self, monkeypatch, tmp_path):
+        import shutil
+        from collections import namedtuple
+        DU = namedtuple("DU", "total used free")
+        free = {"v": 100 << 30}
+        monkeypatch.setattr(shutil, "disk_usage", lambda p: DU(0, 0, free["v"]))
+        g = cap.DiskGuard(str(tmp_path), min_free_gb=20)
+        g.check(); assert not os.path.exists(g.path)
+        free["v"] = 10 << 30; g.check(); assert os.path.exists(g.path)      # dưới ngưỡng -> PAUSE
+        free["v"] = 25 << 30; g.check(); assert os.path.exists(g.path)      # chưa vượt 1.5x -> giữ
+        free["v"] = 31 << 30; g.check(); assert not os.path.exists(g.path)  # vượt 30 GB -> gỡ
+        free["v"] = 10 << 30; g.check(); g.clear(); assert not os.path.exists(g.path)
+
+    def test_min_free_zero_disables(self, tmp_path):
+        g = cap.DiskGuard(str(tmp_path), 0)
+        g.check(); assert not os.path.exists(g.path)

@@ -184,3 +184,37 @@ class TestGpuLock:
             assert p.poll() is None  # tiến trình kia đang chờ khóa
         p.wait(timeout=10)
         assert time.time() - t0 >= 1.4  # 0.5 giữ khóa + 1.0 bên kia
+
+
+class TestCleanupCommand:
+    def test_removes_only_finished_intermediates(self, tmp_path):
+        from pipeline import cleanup
+
+        wd, raw = tmp_path / "work", tmp_path / "raw"
+        (raw / "f").mkdir(parents=True)
+        def touch(p, n=1024):
+            p.parent.mkdir(parents=True, exist_ok=True); p.write_bytes(b"x" * n)
+        touch(raw / "f" / "a.mp3"); touch(raw / "f" / "a.json"); touch(raw / "f" / "b.mp3")
+        with manifest.ManifestWriter(manifest.manifest_path(str(wd), "s0_ingest")) as w:
+            w.write({"id": "A", "source_path": "f/a.mp3"})  # b.mp3 chưa qua s0
+        touch(wd / "s0_ingest" / "audio" / "A.wav"); touch(wd / "s0_ingest" / "audio" / "B.wav")
+        with manifest.ManifestWriter(manifest.manifest_path(str(wd), "s2_segment")) as w:
+            w.write({"id": "A_1", "file_id": "A", "n_segments": 1})
+            w.write({"id": "B_1", "file_id": "B", "n_segments": 2})  # B chưa đủ segment
+        touch(wd / "s2_segment" / "audio" / "A_1.wav"); touch(wd / "s2_segment" / "audio" / "B_1.wav")
+        with manifest.ManifestWriter(manifest.manifest_path(str(wd), "s7_loudnorm")) as w:
+            w.write({"id": "A_1", "audio_path": str(wd / "s7_loudnorm" / "audio" / "A_1.wav"), "loudnorm": "lufs"})
+        touch(wd / "s7_loudnorm" / "audio" / "A_1.wav")
+        with manifest.ManifestWriter(manifest.manifest_path(str(wd), "s8_package")) as w:
+            w.write({"id": "A_1", "audio_path": str(wd / "s7_loudnorm" / "audio" / "A_1.wav"), "tier": "C"})
+
+        freed = cleanup.run(str(wd), str(raw), dry_run=True)
+        assert (raw / "f" / "a.mp3").exists() and sum(freed.values()) == 4 * 1024
+        cleanup.run(str(wd), str(raw))
+        assert not (raw / "f" / "a.mp3").exists() and (raw / "f" / "a.json").exists()
+        assert (raw / "f" / "b.mp3").exists()                      # chưa qua s0
+        assert not (wd / "s0_ingest" / "audio" / "A.wav").exists()
+        assert (wd / "s0_ingest" / "audio" / "B.wav").exists()     # B chưa đủ segment ở s2
+        assert not (wd / "s2_segment" / "audio" / "A_1.wav").exists()
+        assert (wd / "s2_segment" / "audio" / "B_1.wav").exists()  # chưa qua s7
+        assert not (wd / "s7_loudnorm" / "audio" / "A_1.wav").exists()  # tier C
