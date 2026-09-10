@@ -32,8 +32,9 @@ class EcapaBackend:
         import torch
         from speechbrain.inference.speaker import EncoderClassifier
 
-        # speechbrain chưa ổn định trên mps -> dùng cpu
-        run_dev = dev if dev == "cuda" else "cpu"
+        # speechbrain chưa ổn định trên mps -> dùng cpu; cuda phải ghi rõ chỉ số 'cuda:0'
+        # (speechbrain parse 'cuda' lỗi "not enough values to unpack" rồi mới fallback về GPU 0)
+        run_dev = "cuda:0" if dev == "cuda" else "cpu"
         self.torch = torch
         self.clf = EncoderClassifier.from_hparams(
             source="speechbrain/spkrec-ecapa-voxceleb",
