@@ -24,6 +24,30 @@ def ffmpeg_to_wav(src: str, dst: str, sr: int, mono: bool = True) -> None:
     subprocess.run(cmd, check=True, capture_output=True)
 
 
+def ffmpeg_cut(src: str, dst: str, start_s: float, dur_s: float) -> None:
+    """Cắt [start, start+dur) giây của src -> dst (wav, giữ nguyên sr/kênh)."""
+    cmd = ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-ss", f"{start_s:.3f}",
+           "-t", f"{dur_s:.3f}", "-i", src, "-f", "wav", dst]
+    subprocess.run(cmd, check=True, capture_output=True)
+
+
+def ffmpeg_concat(parts: list[str], dst: str) -> None:
+    """Nối các wav cùng định dạng theo thứ tự -> dst (concat demuxer, không re-encode)."""
+    import os
+    import tempfile
+
+    with tempfile.NamedTemporaryFile("w", suffix=".txt", delete=False, encoding="utf-8") as f:
+        for p in parts:
+            f.write("file '" + os.path.abspath(p).replace("'", "'\\''") + "'\n")
+        lst = f.name
+    try:
+        cmd = ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "concat", "-safe", "0",
+               "-i", lst, "-c", "copy", dst]
+        subprocess.run(cmd, check=True, capture_output=True)
+    finally:
+        os.remove(lst)
+
+
 def ffmpeg_loudnorm(src: str, dst: str, target_lufs: float, sr: int) -> None:
     cmd = ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-i", src,
            "-af", f"loudnorm=I={target_lufs}:TP=-2:LRA=11",

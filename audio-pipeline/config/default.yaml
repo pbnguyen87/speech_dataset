@@ -21,6 +21,7 @@ separate:               # s1: tách nhạc nền bằng demucs
   model: htdemucs
   auto_sample_seconds: 30
   auto_music_ratio: 0.10   # RMS(nhạc nền)/RMS(tổng) vượt ngưỡng này -> chạy demucs full
+  chunk_seconds: 7200      # file dài hơn thì demucs chạy từng khúc bấy nhiêu giây rồi nối; demucs nạp cả khúc vào RAM (~10 GB/2h, thiếu RAM -> mã -9 -> hạ xuống)
 
 segment:                # s2: VAD + cắt đoạn
   vad_sr: 16000

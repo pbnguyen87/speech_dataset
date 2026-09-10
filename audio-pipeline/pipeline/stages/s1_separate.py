@@ -35,6 +35,37 @@ def _run_demucs(src: str, out_dir: str, model: str, dev: str) -> str:
     return out
 
 
+def separate_vocals(src: str, dst: str, model: str, dev: str, sr: int, chunk_s: float,
+                    lock_ctx=None) -> None:
+    """Tách vocal của cả file -> dst (wav mono sr). File dài hơn chunk_s được cắt thành
+    từng khúc chunk_s giây, demucs chạy từng khúc rồi nối lại: demucs nạp NGUYÊN file vào
+    RAM (10 giờ 44.1k stereo float32 = 12.7 GB + các stem) nên file dài bị OOM killer (mã -9).
+    lock_ctx: callable trả context manager (khóa GPU) bọc mỗi lần chạy demucs."""
+    import contextlib
+
+    lock_ctx = lock_ctx or contextlib.nullcontext
+    dur = audio_utils.duration_seconds(src)
+    with tempfile.TemporaryDirectory() as td:
+        if dur <= chunk_s:
+            with lock_ctx():
+                vocals = _run_demucs(src, td, model, dev)
+            audio_utils.ffmpeg_to_wav(vocals, dst, sr)  # demucs xuất 44.1k stereo -> chuẩn pipeline
+            return
+        parts = []
+        n = int(dur // chunk_s) + (1 if dur % chunk_s > 0.5 else 0)
+        for i in range(n):
+            piece = os.path.join(td, f"p{i:04d}.wav")
+            audio_utils.ffmpeg_cut(src, piece, i * chunk_s, chunk_s)
+            with lock_ctx():
+                vocals = _run_demucs(piece, os.path.join(td, f"d{i:04d}"), model, dev)
+            conv = os.path.join(td, f"v{i:04d}.wav")
+            audio_utils.ffmpeg_to_wav(vocals, conv, sr)
+            parts.append(conv)
+            os.remove(piece)
+            os.remove(vocals)
+        audio_utils.ffmpeg_concat(parts, dst)
+
+
 def _music_ratio(src: str, sample_s: int, model: str, dev: str, sr: int) -> float:
     """Cắt mẫu giữa file, tách thử, đo RMS(no_vocals)/RMS(tổng)."""
     import numpy as np
@@ -65,6 +96,7 @@ class Worker:
         self.scfg = cfg["separate"]
         self.enabled = self.scfg["enabled"]
         self.sr = cfg["ingest"]["target_sr"]
+        self.chunk_s = float(self.scfg.get("chunk_seconds", 7200))
         self.workdir = workdir
         self.lock = wants_lock(cfg)
         self.w = manifest.ManifestWriter(manifest.manifest_path(workdir, STAGE))
@@ -105,11 +137,8 @@ class Worker:
                 continue
 
             dst = os.path.join(self.out_audio, f"{rec['id']}.wav")
-            with tempfile.TemporaryDirectory() as td:
-                with gpu_lock(self.workdir, self.lock):
-                    vocals = _run_demucs(src, td, self.model, self.dev)
-                # demucs xuất 44.1k stereo -> đưa về chuẩn pipeline
-                audio_utils.ffmpeg_to_wav(vocals, dst, self.sr)
+            separate_vocals(src, dst, self.model, self.dev, self.sr, self.chunk_s,
+                            lock_ctx=lambda: gpu_lock(self.workdir, self.lock))
             self.w.write({**rec, "audio_path": dst, "separated": True, "music_ratio": ratio})
             print(f"  [{i+1}/{len(records)}] {rec['id']}: đã tách vocal")
 

@@ -75,7 +75,8 @@ def stage_loop(stage: str, cfg: dict, workdir: str) -> None:
         items = worker.scan() if tail is None else tail.poll()
         return [it for it in items if not worker.is_done(it)]
 
-    print(f"[stream] {stage} sẵn sàng (batch={worker.batch_n}, chờ gom tối đa {worker.flush_s:g}s)")
+    print(f"[stream] {stage} sẵn sàng (gom {worker.batch_n} item mỗi lượt xử lý, "
+          f"chờ gom tối đa {worker.flush_s:g}s)")
     try:
         _loop(stage, worker, poll, up_done_path, my_done, poll_s)
     finally:

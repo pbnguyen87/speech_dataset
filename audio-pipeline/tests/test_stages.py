@@ -214,3 +214,26 @@ class TestNormalizeSourcePath:
             == "vnexpress.net_rss_podcast_ban-on-khong.rss/Tập_1.mp3"
         assert normalize_source_path("a/b__c.mp3") == "a/b__c.mp3"
         assert normalize_source_path(None) is None
+
+
+class TestSeparateChunks:
+    def test_long_file_is_chunked_and_concatenated(self, monkeypatch, tmp_path):
+        """Giả lập demucs: copy đầu vào làm vocals. File 10s, chunk 4s -> 3 khúc, nối lại đủ 10s."""
+        import shutil
+        import numpy as np
+        from pipeline import audio_utils
+        from pipeline.stages import s1_separate
+
+        src = tmp_path / "in.wav"
+        audio_utils.save_wav(str(src), np.random.rand(24000 * 10).astype("float32") * 0.1, 24000)
+        calls = []
+        def fake_demucs(piece, out_dir, model, dev):
+            calls.append(round(audio_utils.duration_seconds(piece), 1))
+            os.makedirs(out_dir, exist_ok=True)
+            out = os.path.join(out_dir, "vocals.wav"); shutil.copy(piece, out)
+            return out
+        monkeypatch.setattr(s1_separate, "_run_demucs", fake_demucs)
+        dst = tmp_path / "out.wav"
+        s1_separate.separate_vocals(str(src), str(dst), "htdemucs", "cpu", 24000, 4.0)
+        assert calls == [4.0, 4.0, 2.0]
+        assert abs(audio_utils.duration_seconds(str(dst)) - 10.0) < 0.01
