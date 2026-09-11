@@ -218,3 +218,32 @@ class TestCleanupCommand:
         assert not (wd / "s2_segment" / "audio" / "A_1.wav").exists()
         assert (wd / "s2_segment" / "audio" / "B_1.wav").exists()  # chưa qua s7
         assert not (wd / "s7_loudnorm" / "audio" / "A_1.wav").exists()  # tier C
+
+
+class TestStageDiskGuard:
+    def test_stage_waits_while_disk_low(self, monkeypatch, tmp_path):
+        """s0/s1 không xử lý khi đĩa thấp; đĩa trống lại -> xử lý rồi DONE."""
+        import threading
+        import types
+        from collections import namedtuple
+        DU = namedtuple("DU", "total used free")
+        free = {"v": 5 << 30}
+        monkeypatch.setattr(stream.shutil, "disk_usage", lambda p: DU(0, 0, free["v"]))
+        wd = str(tmp_path)
+        holder = {}
+        def fake_import(name):
+            mod = types.SimpleNamespace()
+            def W(cfg, w):
+                holder["w"] = FakeWorker({**cfg, "_stage": "s1_separate"}, w); return holder["w"]
+            mod.Worker = W
+            return mod
+        monkeypatch.setattr(stream.importlib, "import_module", fake_import)
+        with manifest.ManifestWriter(manifest.manifest_path(wd, "s0_ingest")) as w:
+            w.write({"id": "f1"})
+        stream.touch(stream.done_flag(wd, "s0_ingest"))
+        def raise_disk():
+            time.sleep(0.5); assert holder["w"].calls == []  # vẫn chưa xử lý vì đĩa thấp
+            free["v"] = 40 << 30
+        threading.Thread(target=raise_disk).start()
+        stream.stage_loop("s1_separate", {"stream": {"poll_seconds": 0.1, "min_free_gb": 20}}, wd)
+        assert holder["w"].calls == [1] and os.path.exists(stream.done_flag(wd, "s1_separate"))

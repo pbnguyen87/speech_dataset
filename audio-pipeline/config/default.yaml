@@ -11,6 +11,8 @@ stream:                 # chế độ 8 stage chạy song song: python -m pipeli
   max_restarts: 5       # stage chết thì khởi động lại tối đa bấy nhiêu lần
   status_seconds: 60    # supervisor in dòng trạng thái mỗi bấy nhiêu giây
   cleanup: false        # xóa raw + wav trung gian ngay khi stage cuối dùng chúng xong (--cleanup)
+  min_free_gb: 20       # đĩa chứa workdir trống dưới bấy nhiêu GB thì các stage dưới ngừng nhận việc; 0 = tắt
+  disk_guard_stages: [s0_ingest, s1_separate]   # stage sinh nhiều dữ liệu (s2 thì ngược lại: xóa wav s0/s1)
 
 ingest:
   extensions: [".mp3", ".m4a", ".wav", ".flac", ".ogg", ".opus", ".aac", ".wma"]

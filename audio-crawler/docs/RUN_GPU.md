@@ -186,8 +186,10 @@ $OUT/
   (`shuf`).
 - Crawler tải nhanh hơn pipeline xử lý nhiều lần. Dữ liệu đang chờ nằm ở stage nút
   thắt (s5) dưới dạng wav s2, khoảng 170 MB mỗi giờ audio, cộng raw chưa qua s0.
-  `--min-free-gb` (mặc định 20) tự tạm dừng crawler khi đĩa sắp đầy; muốn giữ
-  đĩa dư nhiều hơn thì tăng lên. Đĩa đã đầy giữa chừng: dừng, chạy
+  `--min-free-gb` (mặc định 20) tự tạm dừng crawler khi đĩa sắp đầy; trong pipeline,
+  s0 và s1 (hai stage sinh nhiều dữ liệu nhất) cũng tự ngừng khi đĩa chứa workdir
+  trống dưới `stream.min_free_gb` (mặc định 20 trong config pipeline). Muốn giữ đĩa
+  dư nhiều hơn thì tăng cả hai. Đĩa đã đầy giữa chừng: dừng, chạy
   `../audio-pipeline/.venv/bin/python -m pipeline cleanup --workdir $OUT/work --raw-dir $OUT/raw`
   (thêm `--dry-run` để xem trước) rồi chạy lại với `--cleanup`.
 - Đã xóa raw thì không chạy lại được s0-s2 cho file đó (muốn thì xóa dòng

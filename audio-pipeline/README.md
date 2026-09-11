@@ -137,6 +137,10 @@ tiến trình nào rồi chạy lại lệnh cũ là tiếp tục từ chỗ d�
   của segment, s8 xóa wav tier C — mỗi thứ xóa ngay khi stage cuối cùng dùng nó xong.
 - s0 nhận file raw khi có sidecar `.json` cùng tên, hoặc mtime cũ hơn `stream.settle_seconds`
   (tránh đọc file đang tải dở).
+- Đĩa: s0 (mp3 -> wav gấp 3) và s1 (thêm một bản wav) ngừng nhận việc khi đĩa chứa workdir
+  trống dưới `stream.min_free_gb` (mặc định 20), trống lại trên 1.5x thì tiếp; các stage sau
+  vẫn chạy nên s2 giải phóng wav s0/s1 và hàng đợi tiêu dần. Đã đầy giữa chừng:
+  `python -m pipeline cleanup`.
 
 ## Input
 

@@ -17,6 +17,7 @@ Cơ chế:
 import importlib
 import json
 import os
+import shutil
 import signal
 import subprocess
 import sys
@@ -59,6 +60,30 @@ class _Prefix:
         self.stream.flush()
 
 
+# ------------------------------------------------------------------ hãm theo đĩa trống
+class DiskGuard:
+    """Stage sinh nhiều dữ liệu (s0: mp3 -> wav gấp 3; s1: thêm một bản wav) ngừng nhận việc khi
+    đĩa chứa workdir trống dưới min_free_gb; trống lại trên 1.5x thì tiếp. Các stage sau vẫn
+    chạy để tiêu hàng đợi (s2 xóa wav s0/s1 nên giải phóng đĩa)."""
+
+    def __init__(self, workdir: str, min_free_gb: float, stage: str):
+        self.workdir, self.min_free, self.stage = workdir, min_free_gb * (1 << 30), stage
+        self.paused = False
+
+    def blocked(self) -> bool:
+        if self.min_free <= 0:
+            return False
+        free = shutil.disk_usage(self.workdir).free
+        if not self.paused and free < self.min_free:
+            self.paused = True
+            print(f"[stream] {self.stage} tạm dừng: đĩa trống {free / (1 << 30):.1f} GB < ngưỡng "
+                  f"{self.min_free / (1 << 30):g} GB — chờ stage sau giải phóng", flush=True)
+        elif self.paused and free > self.min_free * 1.5:
+            self.paused = False
+            print(f"[stream] {self.stage} tiếp tục: đĩa trống {free / (1 << 30):.1f} GB", flush=True)
+        return self.paused
+
+
 # ------------------------------------------------------------------ vòng lặp một stage
 def stage_loop(stage: str, cfg: dict, workdir: str) -> None:
     idx = STAGES.index(stage)
@@ -75,19 +100,25 @@ def stage_loop(stage: str, cfg: dict, workdir: str) -> None:
         items = worker.scan() if tail is None else tail.poll()
         return [it for it in items if not worker.is_done(it)]
 
+    guard = None
+    if stage in cfg["stream"].get("disk_guard_stages", ["s0_ingest", "s1_separate"]):
+        guard = DiskGuard(workdir, float(cfg["stream"].get("min_free_gb", 20)), stage)
     print(f"[stream] {stage} sẵn sàng (gom {worker.batch_n} item mỗi lượt xử lý, "
           f"chờ gom tối đa {worker.flush_s:g}s)")
     try:
-        _loop(stage, worker, poll, up_done_path, my_done, poll_s)
+        _loop(stage, worker, poll, up_done_path, my_done, poll_s, guard)
     finally:
         worker.close()
 
 
-def _loop(stage, worker, poll, up_done_path, my_done, poll_s) -> None:
+def _loop(stage, worker, poll, up_done_path, my_done, poll_s, guard=None) -> None:
     pending: list = []
     first_pending_t: float | None = None
     n_done = 0
     while True:
+        if guard and guard.blocked():
+            time.sleep(poll_s)
+            continue
         new = poll()
         if new:
             pending += new
