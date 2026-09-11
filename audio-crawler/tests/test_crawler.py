@@ -332,3 +332,17 @@ class TestPauseFile:
         import time; t = time.time()
         cli.crawl_source({"name": "s", "type": "x", "delay_s": 0}, str(tmp_path), None)
         assert time.time() - t >= 0.25 and (tmp_path / "s" / "a.mp3").exists()
+
+
+class TestLedgerCorruption:
+    def test_bad_line_skipped_and_newline_fixed(self, tmp_path):
+        import json
+        d = tmp_path / "s"; d.mkdir()
+        (d / "ledger.jsonl").write_text('{"id": "ok1", "key": "u1", "path": "a", "source": "s"}\n{"id": "cụt')
+        with Ledger(str(d)) as l:
+            assert l.done == {"ok1"}          # dòng cụt bị bỏ qua, không crash
+            l.add("u2", "b", "s")
+        lines = (d / "ledger.jsonl").read_text().splitlines()
+        assert lines[1] == '{"id": "cụt'      # dòng cụt được kết thúc bằng \n, bản ghi mới nằm dòng riêng
+        assert json.loads(lines[2])["key"] == "u2"
+        assert len(Ledger(str(d)).done) == 2

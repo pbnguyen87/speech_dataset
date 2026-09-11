@@ -2,6 +2,7 @@
      python -m pipeline serve --raw-dir ./raw --workdir ./work [--input-done]      # 8 stage song song
      python -m pipeline status --workdir ./work
      python -m pipeline cleanup --workdir ./work --raw-dir ./raw [--dry-run]   # dọn đĩa hồi tố
+     python -m pipeline repair --workdir ./work [--dry-run]    # bỏ dòng manifest hỏng (đĩa đầy/kill)
 
 Mỗi stage được chạy trong một SUBPROCESS riêng (qua pipeline.stage_runner):
 torch (s1/s4/s5-verify) và ctranslate2 (s5-primary) cùng nhúng OpenMP runtime,
@@ -83,9 +84,25 @@ def main(argv=None):
     p.add_argument("--raw-dir", help="có thì xóa cả audio raw đã qua s0 (giữ sidecar .json)")
     p.add_argument("--dry-run", action="store_true", help="chỉ tính dung lượng, không xóa")
 
+    p = sub.add_parser("repair", help="loại dòng JSON hỏng (ghi dở khi đĩa đầy/kill) khỏi mọi manifest.jsonl")
+    p.add_argument("--workdir", required=True)
+    p.add_argument("--dry-run", action="store_true")
+
     args = parser.parse_args(argv)
 
     import os
+    if args.cmd == "repair":
+        from .manifest import repair
+        from .stream import STAGES, FINAL
+        total = 0
+        for st in STAGES + [FINAL]:
+            path = os.path.join(args.workdir, st, "manifest.jsonl")
+            keep, bad = repair(path, args.dry_run)
+            if bad:
+                print(f"  {st}: {bad} dòng hỏng {'(sẽ bỏ)' if args.dry_run else 'đã bỏ'}, giữ {keep}")
+            total += bad
+        print(f"[repair] {total} dòng hỏng" + (" — bản ghi đó sẽ được stage làm lại khi chạy tiếp" if total else ""))
+        return
     if args.cmd == "status":
         from .stream import status_line
         print(status_line(args.workdir))

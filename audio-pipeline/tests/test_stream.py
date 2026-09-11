@@ -247,3 +247,29 @@ class TestStageDiskGuard:
         threading.Thread(target=raise_disk).start()
         stream.stage_loop("s1_separate", {"stream": {"poll_seconds": 0.1, "min_free_gb": 20}}, wd)
         assert holder["w"].calls == [1] and os.path.exists(stream.done_flag(wd, "s1_separate"))
+
+
+class TestCorruptManifest:
+    def _write(self, p):
+        p.write_text(json.dumps({"id": "a"}) + "\n" + '{"id": "b", "text": "cụt' + "\n"
+                     + json.dumps({"id": "c"}) + "\n" + '{"id": "d"')  # dòng cuối không có \n
+
+    def test_iter_and_tail_skip_bad_lines(self, tmp_path, capsys):
+        p = tmp_path / "manifest.jsonl"; self._write(p)
+        assert [r["id"] for r in manifest.iter_records(str(p))] == ["a", "c"]
+        t = manifest.ManifestTail(str(p))
+        assert [r["id"] for r in t.poll()] == ["a", "c"]  # 'd' chưa có \n -> chờ
+        assert "bỏ qua dòng hỏng" in capsys.readouterr().out
+
+    def test_writer_terminates_partial_last_line(self, tmp_path):
+        p = tmp_path / "manifest.jsonl"; self._write(p)
+        with manifest.ManifestWriter(str(p)) as w:
+            assert w.done == {"a", "c"}
+            w.write({"id": "e"})
+        assert [r["id"] for r in manifest.iter_records(str(p))] == ["a", "c", "e"]  # 'd' cụt thành dòng riêng, không dính 'e'
+
+    def test_repair_rewrites_without_bad_lines(self, tmp_path):
+        p = tmp_path / "manifest.jsonl"; self._write(p)
+        assert manifest.repair(str(p), dry_run=True) == (2, 2)
+        assert manifest.repair(str(p)) == (2, 2)
+        assert p.read_text() == json.dumps({"id": "a"}) + "\n" + json.dumps({"id": "c"}) + "\n"

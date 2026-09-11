@@ -205,6 +205,7 @@ $OUT/
 | `TorchCodec is required for save_with_torchcodec` (demucs, s1) | torchaudio >= 2.9; cài lại đúng mục 2: `torch==2.8.0 torchaudio==2.8.0` |
 | `demucs lỗi (mã -9)` | OOM killer hết RAM hệ thống (`dmesg -T \| grep -i killed`): demucs nạp cả khúc vào RAM, ~10 GB cho khúc 2 giờ; hạ `separate.chunk_seconds` (vd 1800) trong config pipeline |
 | `CalledProcessError ... ffmpeg ... exit status 228` | ENOSPC, hết đĩa: `df -h /tmp $OUT`. File tạm của s1 nằm ở `$OUT/work/_tmp` (không dùng /tmp); đĩa $OUT đầy thì `python -m pipeline cleanup` (mục 8) rồi chạy lại với `--cleanup --min-free-gb` |
+| `json.decoder.JSONDecodeError: Unterminated string` | manifest/ledger có dòng ghi dở (đĩa đầy hoặc kill giữa lúc ghi). Bản hiện tại tự bỏ qua dòng hỏng và làm lại bản ghi đó; dọn hẳn bằng `python -m pipeline repair --workdir $OUT/work` |
 | `demucs lỗi (mã N)` kèm stderr | đọc stderr in ngay sau: thiếu mạng tải model htdemucs, thiếu ffmpeg, hoặc CUDA OOM |
 | `[serve] sN thoát mã ... khởi động lại (k/5)` | stage chết, xem traceback ngay trước dòng đó; hết 5 lần thì serve dừng, sửa rồi chạy lại |
 | Crawler tải nguyên tập dài hàng chục giờ | thiếu `ffprobe`/`ffmpeg` trong PATH của venv crawler; bản hiện tại dừng ngay và báo, cài ffmpeg rồi chạy lại |

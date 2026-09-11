@@ -20,12 +20,23 @@ class Ledger:
         self.path = os.path.join(out_dir, "ledger.jsonl")
         self.done: set[str] = set()
         if os.path.exists(self.path):
-            with open(self.path, encoding="utf-8") as f:
-                for line in f:
+            with open(self.path, encoding="utf-8", errors="replace") as f:
+                for i, line in enumerate(f, 1):
                     line = line.strip()
-                    if line:
+                    if not line:
+                        continue
+                    try:
                         self.done.add(json.loads(line)["id"])
+                    except (json.JSONDecodeError, KeyError) as e:
+                        # dòng ghi dở (đĩa đầy / kill): coi như chưa tải, url đó sẽ tải lại
+                        print(f"  [ledger] bỏ qua dòng hỏng {self.path}:{i} ({e})", flush=True)
         self._fh = open(self.path, "a", encoding="utf-8")
+        if os.path.exists(self.path) and os.path.getsize(self.path) > 0:
+            with open(self.path, "rb") as f:  # dòng cuối thiếu '\n' -> chèn, khỏi dính vào bản ghi mới
+                f.seek(-1, os.SEEK_END)
+                if f.read(1) != b"\n":
+                    self._fh.write("\n")
+                    self._fh.flush()
 
     def has(self, key: str) -> bool:
         return url_id(key) in self.done

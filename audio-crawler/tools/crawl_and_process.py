@@ -56,7 +56,11 @@ class LedgerTail:
                     self.offsets[path] = self.offsets.get(path, 0) + len(line.encode("utf-8"))
                     line = line.strip()
                     if line:
-                        rec = json.loads(line)
+                        try:
+                            rec = json.loads(line)
+                        except json.JSONDecodeError:
+                            print(f"[ledger] bỏ qua dòng hỏng trong {path}", flush=True)
+                            continue
                         rec["path"] = os.path.abspath(os.path.join(CRAWLER_ROOT, rec["path"]))
                         new.append(rec)
         return new
@@ -106,7 +110,12 @@ class Processed:
         self.done: set[str] = set()
         if os.path.exists(self.path):
             with open(self.path, encoding="utf-8") as f:
-                self.done = {json.loads(l)["path"] for l in f if l.strip()}
+                for l in f:
+                    if l.strip():
+                        try:
+                            self.done.add(json.loads(l)["path"])
+                        except (json.JSONDecodeError, KeyError):
+                            pass  # dòng ghi dở -> file đó xử lý lại, pipeline resume theo hash nên vô hại
 
     def add(self, records: list[dict]) -> None:
         with open(self.path, "a", encoding="utf-8") as f:
@@ -123,7 +132,10 @@ def _read_jsonl(path: str):
     with open(path, encoding="utf-8") as f:
         for line in f:
             if line.strip():
-                yield json.loads(line)
+                try:
+                    yield json.loads(line)
+                except json.JSONDecodeError:
+                    continue
 
 
 def _remove(path: str) -> int:
