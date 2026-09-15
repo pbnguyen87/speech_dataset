@@ -266,9 +266,9 @@ def main(argv=None):
     ap.add_argument("--poll", type=float, default=3.0, help="giây giữa 2 lần đọc ledger")
     ap.add_argument("--cleanup", action="store_true",
                     help="xóa audio gốc + wav trung gian sau khi xử lý; sau s8 xóa wav tier C (giữ tier A/B)")
-    ap.add_argument("--min-free-gb", type=float, default=20.0,
+    ap.add_argument("--min-free-gb", type=float, default=50.0,
                     help="đĩa chứa --out trống dưới N GB thì tạm dừng crawler (tạo <out>/PAUSE) cho pipeline "
-                         "giải phóng; 0 = tắt (mặc định 20)")
+                         "giải phóng; 0 = tắt (mặc định 50)")
     ap.add_argument("--stream", action="store_true",
                     help="pipeline chạy 8 stage song song (python -m pipeline serve) thay vì theo lô; "
                          "--batch/--stages/--final-stages/--poll không dùng")

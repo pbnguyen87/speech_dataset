@@ -114,7 +114,7 @@ Tham số:
 | `--config config/vi_podcast.yaml` | 1 source `rss`, `urls_file: podcast_feeds_2h.txt` (1694 feed), `max_hours: 10` |
 | `--stream` | pipeline chạy 8 stage song song (`python -m pipeline serve`), model nạp một lần, GPU không nghỉ; bị kill chạy lại là tiếp (xem bên dưới) |
 | `--cleanup` | xóa audio gốc ngay khi s0 xong, wav trung gian ngay khi stage cuối dùng xong; sau s8 xóa wav tier C |
-| `--min-free-gb 20` | đĩa chứa `--out` trống dưới 20 GB thì tạo `$OUT/raw/PAUSE`, crawler ngừng tải trước tập kế cho pipeline giải phóng; trống lại trên 30 GB thì gỡ. 0 = tắt |
+| `--min-free-gb 50` | đĩa chứa `--out` trống dưới 50 GB thì tạo `$OUT/raw/PAUSE`, crawler ngừng tải trước tập kế cho pipeline giải phóng; trống lại trên 75 GB thì gỡ. 0 = tắt |
 | `--source X` | chỉ chạy source tên X |
 | `--limit N` | mỗi source chỉ N item đầu (chạy thử) |
 | `--no-crawl` | không crawl, chỉ xử lý ledger có sẵn |
@@ -186,10 +186,10 @@ $OUT/
   (`shuf`).
 - Crawler tải nhanh hơn pipeline xử lý nhiều lần. Dữ liệu đang chờ nằm ở stage nút
   thắt (s5) dưới dạng wav s2, khoảng 170 MB mỗi giờ audio, cộng raw chưa qua s0.
-  `--min-free-gb` (mặc định 20) tự tạm dừng crawler khi đĩa sắp đầy; trong pipeline,
-  s0 và s1 (hai stage sinh nhiều dữ liệu nhất) cũng tự ngừng khi đĩa chứa workdir
-  trống dưới `stream.min_free_gb` (mặc định 20 trong config pipeline). Muốn giữ đĩa
-  dư nhiều hơn thì tăng cả hai. Đĩa đã đầy giữa chừng: dừng, chạy
+  `--min-free-gb` (mặc định 50) tự tạm dừng crawler khi đĩa sắp đầy; trong pipeline,
+  s0 (stage sinh nhiều dữ liệu nhất, mp3 -> wav gấp 3) cũng tự ngừng khi đĩa chứa
+  workdir trống dưới `stream.min_free_gb` (mặc định 50 trong config pipeline), tiếp
+  lại khi trống trên 75 GB. Muốn giữ đĩa dư nhiều hơn thì tăng cả hai. Đĩa đã đầy giữa chừng: dừng, chạy
   `../audio-pipeline/.venv/bin/python -m pipeline cleanup --workdir $OUT/work --raw-dir $OUT/raw`
   (thêm `--dry-run` để xem trước) rồi chạy lại với `--cleanup`.
 - Đã xóa raw thì không chạy lại được s0-s2 cho file đó (muốn thì xóa dòng

@@ -245,7 +245,8 @@ class TestStageDiskGuard:
             time.sleep(0.5); assert holder["w"].calls == []  # vẫn chưa xử lý vì đĩa thấp
             free["v"] = 40 << 30
         threading.Thread(target=raise_disk).start()
-        stream.stage_loop("s1_separate", {"stream": {"poll_seconds": 0.1, "min_free_gb": 20}}, wd)
+        stream.stage_loop("s1_separate", {"stream": {"poll_seconds": 0.1, "min_free_gb": 20,
+                                                    "disk_guard_stages": ["s1_separate"]}}, wd)
         assert holder["w"].calls == [1] and os.path.exists(stream.done_flag(wd, "s1_separate"))
 
 

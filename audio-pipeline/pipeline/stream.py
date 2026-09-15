@@ -101,8 +101,8 @@ def stage_loop(stage: str, cfg: dict, workdir: str) -> None:
         return [it for it in items if not worker.is_done(it)]
 
     guard = None
-    if stage in cfg["stream"].get("disk_guard_stages", ["s0_ingest", "s1_separate"]):
-        guard = DiskGuard(workdir, float(cfg["stream"].get("min_free_gb", 20)), stage)
+    if stage in cfg["stream"].get("disk_guard_stages", ["s0_ingest"]):
+        guard = DiskGuard(workdir, float(cfg["stream"].get("min_free_gb", 50)), stage)
     print(f"[stream] {stage} sẵn sàng (gom {worker.batch_n} item mỗi lượt xử lý, "
           f"chờ gom tối đa {worker.flush_s:g}s)")
     try:
