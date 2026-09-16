@@ -221,14 +221,13 @@ class TestCleanupCommand:
 
 
 class TestStageDiskGuard:
-    def test_stage_waits_while_disk_low(self, monkeypatch, tmp_path):
-        """s0/s1 không xử lý khi đĩa thấp; đĩa trống lại -> xử lý rồi DONE."""
+    def test_stage_waits_while_audio_dir_too_big(self, monkeypatch, tmp_path):
+        """s1 không xử lý khi audio/ của nó > max; giảm dưới resume -> xử lý rồi DONE."""
         import threading
         import types
-        from collections import namedtuple
-        DU = namedtuple("DU", "total used free")
-        free = {"v": 5 << 30}
-        monkeypatch.setattr(stream.shutil, "disk_usage", lambda p: DU(0, 0, free["v"]))
+        size = {"v": 60 * stream.GB}
+        monkeypatch.setattr(stream, "dir_size", lambda p: size["v"])
+        monkeypatch.setattr(stream.DiskGuard, "RECHECK_S", 0.0)
         wd = str(tmp_path)
         holder = {}
         def fake_import(name):
@@ -241,12 +240,14 @@ class TestStageDiskGuard:
         with manifest.ManifestWriter(manifest.manifest_path(wd, "s0_ingest")) as w:
             w.write({"id": "f1"})
         stream.touch(stream.done_flag(wd, "s0_ingest"))
-        def raise_disk():
-            time.sleep(0.5); assert holder["w"].calls == []  # vẫn chưa xử lý vì đĩa thấp
-            free["v"] = 40 << 30
-        threading.Thread(target=raise_disk).start()
-        stream.stage_loop("s1_separate", {"stream": {"poll_seconds": 0.1, "min_free_gb": 20,
-                                                    "disk_guard_stages": ["s1_separate"]}}, wd)
+        def shrink():
+            time.sleep(0.5); assert holder["w"].calls == []   # vẫn chưa xử lý vì thư mục quá lớn
+            size["v"] = 30 * stream.GB
+            time.sleep(0.5); assert holder["w"].calls == []   # 30 GB: chưa dưới resume 10 -> vẫn chờ
+            size["v"] = 5 * stream.GB
+        threading.Thread(target=shrink).start()
+        stream.stage_loop("s1_separate", {"stream": {"poll_seconds": 0.1, "max_dir_gb": 50, "resume_dir_gb": 10,
+                                                    "cleanup": True, "disk_guard_stages": ["s1_separate"]}}, wd)
         assert holder["w"].calls == [1] and os.path.exists(stream.done_flag(wd, "s1_separate"))
 
 

@@ -173,31 +173,54 @@ def cleanup_tier_c(workdir: str) -> int:
     return n
 
 
-# ------------------------------------------------------------------ hãm crawler theo đĩa trống
-class DiskGuard:
-    """Đĩa chứa raw trống dưới min_free_gb -> tạo <raw>/PAUSE (crawler ngừng tải trước tập kế);
-    trống lại trên 1.5x ngưỡng -> gỡ. Pipeline vẫn chạy nên đĩa được giải phóng dần."""
+# ------------------------------------------------------------------ hãm crawler theo dung lượng raw
+GB = 1 << 30
 
-    def __init__(self, raw_dir: str, min_free_gb: float):
+
+def dir_size(path: str) -> int:
+    """Tổng byte các file trong path (đệ quy), bỏ qua file đang biến mất."""
+    total = 0
+    for root, _, files in os.walk(path):
+        for f in files:
+            try:
+                total += os.path.getsize(os.path.join(root, f))
+            except OSError:
+                pass
+    return total
+
+
+class DiskGuard:
+    """raw/ (audio chưa qua s0) vượt max_gb -> tạo <raw>/PAUSE (crawler ngừng tải trước tập kế);
+    giảm xuống dưới resume_gb -> gỡ. Pipeline vẫn chạy, với --cleanup s0 xóa raw đã chuyển đổi
+    nên raw/ co lại. Tùy chọn thêm: đĩa trống dưới min_free_gb cũng dừng (0 = bỏ qua)."""
+
+    def __init__(self, raw_dir: str, max_gb: float, resume_gb: float = 5.0, min_free_gb: float = 0.0):
         self.path = os.path.join(raw_dir, "PAUSE")
-        self.raw_dir, self.min_free = raw_dir, min_free_gb * (1 << 30)
+        self.raw_dir = raw_dir
+        self.max_b, self.resume_b, self.min_free = max_gb * GB, resume_gb * GB, min_free_gb * GB
         self.paused = False
         os.makedirs(raw_dir, exist_ok=True)
         if os.path.exists(self.path):
             os.remove(self.path)
 
     def check(self) -> None:
-        if self.min_free <= 0:
+        if self.max_b <= 0 and self.min_free <= 0:
             return
-        free = shutil.disk_usage(self.raw_dir).free
-        if not self.paused and free < self.min_free:
+        size = dir_size(self.raw_dir) if self.max_b > 0 else 0
+        free = shutil.disk_usage(self.raw_dir).free if self.min_free > 0 else None
+        too_big = self.max_b > 0 and size > self.max_b
+        too_little = free is not None and free < self.min_free
+        if not self.paused and (too_big or too_little):
             open(self.path, "w").close()
             self.paused = True
-            print(f"[đĩa] trống {free / (1 << 30):.1f} GB < ngưỡng — tạm dừng crawler (pipeline vẫn chạy)", flush=True)
-        elif self.paused and free > self.min_free * 1.5:
+            why = f"raw {size / GB:.2f} GB > {self.max_b / GB:g} GB" if too_big else f"đĩa trống {free / GB:.1f} GB"
+            print(f"[đĩa] {why} — tạm dừng crawler, chờ raw giảm dưới {self.resume_b / GB:g} GB "
+                  f"(pipeline vẫn chạy; cần --cleanup để s0 xóa raw đã xử lý)", flush=True)
+        elif self.paused and (self.max_b <= 0 or size < self.resume_b) and \
+                (free is None or free > self.min_free * 1.5):
             os.remove(self.path)
             self.paused = False
-            print(f"[đĩa] trống {free / (1 << 30):.1f} GB — crawler tiếp tục", flush=True)
+            print(f"[đĩa] raw {size / GB:.2f} GB — crawler tiếp tục", flush=True)
 
     def clear(self) -> None:
         if os.path.exists(self.path):
@@ -206,7 +229,7 @@ class DiskGuard:
 
 # ------------------------------------------------------------------ chế độ stream
 def run_stream(pipeline_dir: str, raw_dir: str, workdir: str, crawler, configs: list[str],
-               device: str | None, cleanup: bool, min_free_gb: float = 0.0) -> int:
+               device: str | None, cleanup: bool, guard: "DiskGuard | None" = None) -> int:
     """Pipeline serve quét thẳng raw_dir (không cần staging/ledger); crawler xong -> tạo
     <workdir>/INPUT_DONE để s0 biết không còn file mới. Ctrl-C: tắt cả hai, chạy lại là resume."""
     cmd = [pipeline_python(pipeline_dir), "-m", "pipeline", "serve",
@@ -223,7 +246,7 @@ def run_stream(pipeline_dir: str, raw_dir: str, workdir: str, crawler, configs: 
         cmd += ["--input-done"]
     serve = subprocess.Popen(cmd, cwd=pipeline_dir)
     print(f"[pipeline] serve pid {serve.pid} (8 stage song song)", flush=True)
-    guard = DiskGuard(raw_dir, min_free_gb)
+    guard = guard or DiskGuard(raw_dir, 0)
     try:
         if crawler is not None:
             while crawler.poll() is None:
@@ -266,9 +289,12 @@ def main(argv=None):
     ap.add_argument("--poll", type=float, default=3.0, help="giây giữa 2 lần đọc ledger")
     ap.add_argument("--cleanup", action="store_true",
                     help="xóa audio gốc + wav trung gian sau khi xử lý; sau s8 xóa wav tier C (giữ tier A/B)")
-    ap.add_argument("--min-free-gb", type=float, default=50.0,
-                    help="đĩa chứa --out trống dưới N GB thì tạm dừng crawler (tạo <out>/PAUSE) cho pipeline "
-                         "giải phóng; 0 = tắt (mặc định 50)")
+    ap.add_argument("--max-raw-gb", type=float, default=20.0,
+                    help="raw/ (audio chưa qua s0) vượt N GB thì tạm dừng crawler (tạo <out>/PAUSE); 0 = tắt (mặc định 20)")
+    ap.add_argument("--resume-raw-gb", type=float, default=5.0,
+                    help="crawler chạy lại khi raw/ giảm xuống dưới N GB (mặc định 5)")
+    ap.add_argument("--min-free-gb", type=float, default=0.0,
+                    help="thêm điều kiện: đĩa chứa --out trống dưới N GB cũng tạm dừng; 0 = bỏ qua (mặc định)")
     ap.add_argument("--stream", action="store_true",
                     help="pipeline chạy 8 stage song song (python -m pipeline serve) thay vì theo lô; "
                          "--batch/--stages/--final-stages/--poll không dùng")
@@ -289,13 +315,17 @@ def main(argv=None):
         crawler = subprocess.Popen(cmd, cwd=CRAWLER_ROOT)
         print(f"[crawler] pid {crawler.pid}", flush=True)
 
+    guard = DiskGuard(os.path.abspath(args.out), args.max_raw_gb if crawler else 0,
+                      args.resume_raw_gb, args.min_free_gb if crawler else 0)
+    if crawler and args.max_raw_gb > 0 and not args.cleanup:
+        print("[đĩa] CẢNH BÁO: --max-raw-gb chỉ có ý nghĩa khi có --cleanup (s0 xóa raw đã xử lý); "
+              "không có thì raw/ không bao giờ giảm và crawler sẽ dừng mãi", flush=True)
     if args.stream:
         sys.exit(run_stream(pipeline_dir, os.path.abspath(args.out), workdir, crawler,
-                            args.pipeline_config, args.device, args.cleanup, args.min_free_gb))
+                            args.pipeline_config, args.device, args.cleanup, guard))
 
     processed = Processed(workdir)
     tail = LedgerTail(os.path.abspath(args.out))
-    guard = DiskGuard(os.path.abspath(args.out), args.min_free_gb if crawler else 0)
 
     queue: list[dict] = []
     n_ok = n_fail = 0

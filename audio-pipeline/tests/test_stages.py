@@ -237,3 +237,20 @@ class TestSeparateChunks:
         s1_separate.separate_vocals(str(src), str(dst), "htdemucs", "cpu", 24000, 4.0)
         assert calls == [4.0, 4.0, 2.0]
         assert abs(audio_utils.duration_seconds(str(dst)) - 10.0) < 0.01
+
+
+class TestPackageEmpty:
+    def test_s8_with_all_tier_c_writes_empty_dataset(self, tmp_path):
+        import json
+        from pipeline.stages import s8_package
+        from pipeline import manifest
+        wd = str(tmp_path)
+        with manifest.ManifestWriter(manifest.manifest_path(wd, "s7_loudnorm")) as w:
+            w.write({"id": "x", "file_id": "f", "audio_path": "/khong/co.wav", "duration": 3.0,
+                     "text": "a", "cer": None, "snr_db": 30, "clipping": 0})
+        cfg = {"package": {"tiers": {"A": {"max_cer": 0.02, "min_snr_db": 20, "min_dnsmos": 3, "max_clipping": 0.001,
+                                            "min_seconds": 2, "max_seconds": 13, "allow_multi_speaker": False}},
+                           "keep_tiers": None, "split": {"val_ratio": 0.02, "test_ratio": 0.02, "seed": 1},
+                           "parquet": {"enabled": False}}}
+        s8_package.run(cfg, wd)
+        assert (tmp_path / "s8_package" / "dataset" / "metadata.csv").read_text().count("\n") == 1  # chỉ header

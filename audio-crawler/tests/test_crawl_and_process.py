@@ -110,19 +110,32 @@ class TestCleanup:
 
 
 class TestDiskGuard:
-    def test_pause_file_follows_free_space(self, monkeypatch, tmp_path):
+    def test_pause_file_follows_raw_size(self, monkeypatch, tmp_path):
+        size = {"v": 20 * cap.GB}
+        monkeypatch.setattr(cap, "dir_size", lambda p: size["v"])
+        g = cap.DiskGuard(str(tmp_path), max_gb=50, resume_gb=10)
+        g.check(); assert not os.path.exists(g.path)
+        size["v"] = 55 * cap.GB; g.check(); assert os.path.exists(g.path)      # > 50 -> PAUSE
+        size["v"] = 30 * cap.GB; g.check(); assert os.path.exists(g.path)      # chưa dưới 10 -> giữ
+        size["v"] = 9 * cap.GB;  g.check(); assert not os.path.exists(g.path)  # < 10 -> gỡ
+        size["v"] = 55 * cap.GB; g.check(); g.clear(); assert not os.path.exists(g.path)
+
+    def test_min_free_extra_condition(self, monkeypatch, tmp_path):
         import shutil
         from collections import namedtuple
         DU = namedtuple("DU", "total used free")
-        free = {"v": 100 << 30}
+        monkeypatch.setattr(cap, "dir_size", lambda p: 1 * cap.GB)
+        free = {"v": 5 * cap.GB}
         monkeypatch.setattr(shutil, "disk_usage", lambda p: DU(0, 0, free["v"]))
-        g = cap.DiskGuard(str(tmp_path), min_free_gb=20)
-        g.check(); assert not os.path.exists(g.path)
-        free["v"] = 10 << 30; g.check(); assert os.path.exists(g.path)      # dưới ngưỡng -> PAUSE
-        free["v"] = 25 << 30; g.check(); assert os.path.exists(g.path)      # chưa vượt 1.5x -> giữ
-        free["v"] = 31 << 30; g.check(); assert not os.path.exists(g.path)  # vượt 30 GB -> gỡ
-        free["v"] = 10 << 30; g.check(); g.clear(); assert not os.path.exists(g.path)
+        g = cap.DiskGuard(str(tmp_path), max_gb=50, resume_gb=10, min_free_gb=20)
+        g.check(); assert os.path.exists(g.path)          # raw nhỏ nhưng đĩa trống thấp -> PAUSE
+        free["v"] = 31 * cap.GB; g.check(); assert not os.path.exists(g.path)
 
-    def test_min_free_zero_disables(self, tmp_path):
+    def test_zero_disables(self, tmp_path):
         g = cap.DiskGuard(str(tmp_path), 0)
         g.check(); assert not os.path.exists(g.path)
+
+    def test_dir_size(self, tmp_path):
+        (tmp_path / "a").mkdir(); (tmp_path / "a" / "x.mp3").write_bytes(b"1" * 1000)
+        (tmp_path / "y.json").write_bytes(b"1" * 24)
+        assert cap.dir_size(str(tmp_path)) == 1024

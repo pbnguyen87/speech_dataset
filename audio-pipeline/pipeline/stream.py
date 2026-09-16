@@ -60,27 +60,58 @@ class _Prefix:
         self.stream.flush()
 
 
-# ------------------------------------------------------------------ hãm theo đĩa trống
-class DiskGuard:
-    """Stage sinh nhiều dữ liệu (s0: mp3 -> wav gấp 3; s1: thêm một bản wav) ngừng nhận việc khi
-    đĩa chứa workdir trống dưới min_free_gb; trống lại trên 1.5x thì tiếp. Các stage sau vẫn
-    chạy để tiêu hàng đợi (s2 xóa wav s0/s1 nên giải phóng đĩa)."""
+# ------------------------------------------------------------------ hãm theo dung lượng audio của stage
+GB = 1 << 30
 
-    def __init__(self, workdir: str, min_free_gb: float, stage: str):
-        self.workdir, self.min_free, self.stage = workdir, min_free_gb * (1 << 30), stage
+
+def dir_size(path: str) -> int:
+    total = 0
+    for root, _, files in os.walk(path):
+        for f in files:
+            try:
+                total += os.path.getsize(os.path.join(root, f))
+            except OSError:
+                pass
+    return total
+
+
+class DiskGuard:
+    """Stage sinh nhiều dữ liệu (s0: mp3 -> wav gấp 3) ngừng nhận việc khi <workdir>/<stage>/audio
+    vượt max_gb; giảm xuống dưới resume_gb (stage sau xử lý xong và xóa, cần cleanup) thì tiếp.
+    Tùy chọn thêm: đĩa trống dưới min_free_gb cũng dừng. Đo lại tối đa mỗi RECHECK_S giây."""
+
+    RECHECK_S = 10.0
+
+    def __init__(self, workdir: str, stage: str, max_gb: float, resume_gb: float, min_free_gb: float = 0.0):
+        self.dir = os.path.join(workdir, stage, "audio")
+        self.workdir, self.stage = workdir, stage
+        self.max_b, self.resume_b, self.min_free = max_gb * GB, resume_gb * GB, min_free_gb * GB
         self.paused = False
+        self._t = 0.0
+
+    def touch(self) -> None:
+        """Vừa xử lý xong một lượt -> lần hỏi kế tiếp phải đo lại ngay (bỏ throttle)."""
+        self._t = 0.0
 
     def blocked(self) -> bool:
-        if self.min_free <= 0:
+        if self.max_b <= 0 and self.min_free <= 0:
             return False
-        free = shutil.disk_usage(self.workdir).free
-        if not self.paused and free < self.min_free:
+        if time.time() - self._t < self.RECHECK_S:
+            return self.paused
+        self._t = time.time()
+        size = dir_size(self.dir) if self.max_b > 0 else 0
+        free = shutil.disk_usage(self.workdir).free if self.min_free > 0 else None
+        too_big = self.max_b > 0 and size > self.max_b
+        too_little = free is not None and free < self.min_free
+        if not self.paused and (too_big or too_little):
             self.paused = True
-            print(f"[stream] {self.stage} tạm dừng: đĩa trống {free / (1 << 30):.1f} GB < ngưỡng "
-                  f"{self.min_free / (1 << 30):g} GB — chờ stage sau giải phóng", flush=True)
-        elif self.paused and free > self.min_free * 1.5:
+            why = f"audio {size / GB:.2f} GB > {self.max_b / GB:g} GB" if too_big else f"đĩa trống {free / GB:.1f} GB"
+            print(f"[stream] {self.stage} tạm dừng: {why} — chờ stage sau xử lý xong "
+                  f"(giảm dưới {self.resume_b / GB:g} GB)", flush=True)
+        elif self.paused and (self.max_b <= 0 or size < self.resume_b) and \
+                (free is None or free > self.min_free * 1.5):
             self.paused = False
-            print(f"[stream] {self.stage} tiếp tục: đĩa trống {free / (1 << 30):.1f} GB", flush=True)
+            print(f"[stream] {self.stage} tiếp tục: audio {size / GB:.2f} GB", flush=True)
         return self.paused
 
 
@@ -101,8 +132,13 @@ def stage_loop(stage: str, cfg: dict, workdir: str) -> None:
         return [it for it in items if not worker.is_done(it)]
 
     guard = None
-    if stage in cfg["stream"].get("disk_guard_stages", ["s0_ingest"]):
-        guard = DiskGuard(workdir, float(cfg["stream"].get("min_free_gb", 50)), stage)
+    st = cfg["stream"]
+    if stage in st.get("disk_guard_stages", ["s0_ingest"]):
+        guard = DiskGuard(workdir, stage, float(st.get("max_dir_gb", 20)), float(st.get("resume_dir_gb", 5)),
+                          float(st.get("min_free_gb", 0)))
+        if guard.max_b > 0 and not st.get("cleanup"):
+            print(f"[stream] {stage} CẢNH BÁO: max_dir_gb chỉ có ý nghĩa khi cleanup bật "
+                  f"(stage sau xóa wav đã dùng xong); không thì thư mục không giảm và stage dừng mãi", flush=True)
     print(f"[stream] {stage} sẵn sàng (gom {worker.batch_n} item mỗi lượt xử lý, "
           f"chờ gom tối đa {worker.flush_s:g}s)")
     try:
@@ -111,15 +147,18 @@ def stage_loop(stage: str, cfg: dict, workdir: str) -> None:
         worker.close()
 
 
+def _key(item) -> str:
+    return item if isinstance(item, str) else item["id"]
+
+
 def _loop(stage, worker, poll, up_done_path, my_done, poll_s, guard=None) -> None:
     pending: list = []
     first_pending_t: float | None = None
     n_done = 0
     while True:
-        if guard and guard.blocked():
-            time.sleep(poll_s)
-            continue
-        new = poll()
+        # s0 quét lại thư mục mỗi vòng -> file đang chờ (bị hãm / chưa đủ file) sẽ xuất hiện lại: bỏ trùng
+        have = {_key(it) for it in pending}
+        new = [it for it in poll() if _key(it) not in have]
         if new:
             pending += new
             first_pending_t = first_pending_t or time.time()
@@ -127,11 +166,23 @@ def _loop(stage, worker, poll, up_done_path, my_done, poll_s, guard=None) -> Non
         ready, pending = worker.ready(pending, up_done)
         waited = (time.time() - first_pending_t) if first_pending_t else 0.0
         if ready and (len(ready) >= worker.batch_n or up_done or waited >= worker.flush_s):
-            worker.process(ready)
-            n_done += len(ready)
+            if guard is None:
+                worker.process(ready)
+                n_done += len(ready)
+                first_pending_t = time.time() if pending else None
+                continue  # có thể còn hàng: đọc tiếp ngay, không ngủ
+            # stage bị hãm theo dung lượng: từng item một, đo lại trước mỗi item
+            did = 0
+            while ready and not guard.blocked():
+                worker.process([ready.pop(0)])
+                guard.touch()
+                did += 1
+            n_done += did
+            pending = ready + pending  # phần bị hãm giữa chừng giữ lại
             first_pending_t = time.time() if pending else None
-            continue  # có thể còn hàng: đọc tiếp ngay, không ngủ
-        if ready:  # chưa đủ batch, chưa hết giờ chờ -> giữ lại
+            if did and not pending:
+                continue
+        elif ready:  # chưa đủ batch, chưa hết giờ chờ -> giữ lại
             pending = ready + pending
         if up_done and not pending and not new:
             if not poll():  # đọc lại lần cuối cho chắc rồi mới báo xong

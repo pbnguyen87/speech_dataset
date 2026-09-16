@@ -103,6 +103,7 @@ def run(cfg: dict, workdir: str, limit: int | None = None) -> str:
     ds_dir = os.path.join(out_dir, "dataset")
     if os.path.exists(ds_dir):
         shutil.rmtree(ds_dir)
+    os.makedirs(ds_dir, exist_ok=True)  # kể cả khi không segment nào được giữ -> metadata.csv rỗng
     meta_rows = []
     for rec in kept:
         rel = os.path.join("wav", rec["split"], os.path.basename(rec["audio_path"]))

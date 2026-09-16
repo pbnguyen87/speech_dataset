@@ -114,7 +114,8 @@ Tham số:
 | `--config config/vi_podcast.yaml` | 1 source `rss`, `urls_file: podcast_feeds_2h.txt` (1694 feed), `max_hours: 10` |
 | `--stream` | pipeline chạy 8 stage song song (`python -m pipeline serve`), model nạp một lần, GPU không nghỉ; bị kill chạy lại là tiếp (xem bên dưới) |
 | `--cleanup` | xóa audio gốc ngay khi s0 xong, wav trung gian ngay khi stage cuối dùng xong; sau s8 xóa wav tier C |
-| `--min-free-gb 50` | đĩa chứa `--out` trống dưới 50 GB thì tạo `$OUT/raw/PAUSE`, crawler ngừng tải trước tập kế cho pipeline giải phóng; trống lại trên 75 GB thì gỡ. 0 = tắt |
+| `--max-raw-gb 20` / `--resume-raw-gb 5` | `raw/` (audio chưa qua s0) vượt 20 GB thì tạo `$OUT/raw/PAUSE`, crawler ngừng tải trước tập kế; s0 xử lý và xóa dần (cần `--cleanup`), giảm dưới 5 GB thì crawler chạy tiếp. `--max-raw-gb 0` = tắt |
+| `--min-free-gb N` | tùy chọn thêm: đĩa chứa `--out` trống dưới N GB cũng dừng crawler; mặc định 0 = bỏ qua |
 | `--source X` | chỉ chạy source tên X |
 | `--limit N` | mỗi source chỉ N item đầu (chạy thử) |
 | `--no-crawl` | không crawl, chỉ xử lý ledger có sẵn |
@@ -186,10 +187,12 @@ $OUT/
   (`shuf`).
 - Crawler tải nhanh hơn pipeline xử lý nhiều lần. Dữ liệu đang chờ nằm ở stage nút
   thắt (s5) dưới dạng wav s2, khoảng 170 MB mỗi giờ audio, cộng raw chưa qua s0.
-  `--min-free-gb` (mặc định 50) tự tạm dừng crawler khi đĩa sắp đầy; trong pipeline,
-  s0 (stage sinh nhiều dữ liệu nhất, mp3 -> wav gấp 3) cũng tự ngừng khi đĩa chứa
-  workdir trống dưới `stream.min_free_gb` (mặc định 50 trong config pipeline), tiếp
-  lại khi trống trên 75 GB. Muốn giữ đĩa dư nhiều hơn thì tăng cả hai. Đĩa đã đầy giữa chừng: dừng, chạy
+  Hai chốt chặn cùng ngưỡng 20 GB, chạy lại khi giảm dưới 5 GB: crawler dừng khi
+  `raw/` vượt `--max-raw-gb`; s0 (mp3 -> wav gấp 3) dừng khi `work/s0_ingest/audio/`
+  vượt `stream.max_dir_gb` trong config pipeline. Cả hai chỉ có tác dụng khi có
+  `--cleanup` (s0 xóa raw đã chuyển, s2 xóa wav s0 đã cắt), không thì thư mục không
+  bao giờ giảm và hai tiến trình dừng mãi. Dữ liệu tạm tối đa vì thế ~40 GB cộng
+  wav s2 đang chờ s5. Đĩa đã đầy giữa chừng: dừng, chạy
   `../audio-pipeline/.venv/bin/python -m pipeline cleanup --workdir $OUT/work --raw-dir $OUT/raw`
   (thêm `--dry-run` để xem trước) rồi chạy lại với `--cleanup`.
 - Đã xóa raw thì không chạy lại được s0-s2 cho file đó (muốn thì xóa dòng
@@ -204,7 +207,8 @@ $OUT/
 | `[s5] ... OOM, giảm batch_size -> N` lặp lại mỗi lô | đặt `transcribe.primary.batch_size` / `transcribe.verify.batch_size` = N trong config pipeline (16 GB: 32/32; 24 GB: 64/48) |
 | `TorchCodec is required for save_with_torchcodec` (demucs, s1) | torchaudio >= 2.9; cài lại đúng mục 2: `torch==2.8.0 torchaudio==2.8.0` |
 | `demucs lỗi (mã -9)` | OOM killer hết RAM hệ thống (`dmesg -T \| grep -i killed`): demucs nạp cả khúc vào RAM, ~10 GB cho khúc 2 giờ; hạ `separate.chunk_seconds` (vd 1800) trong config pipeline |
-| `CalledProcessError ... ffmpeg ... exit status 228` | ENOSPC, hết đĩa: `df -h /tmp $OUT`. File tạm của s1 nằm ở `$OUT/work/_tmp` (không dùng /tmp); đĩa $OUT đầy thì `python -m pipeline cleanup` (mục 8) rồi chạy lại với `--cleanup --min-free-gb` |
+| `CalledProcessError ... ffmpeg ... exit status 228` | ENOSPC, hết đĩa: `df -h /tmp $OUT`. File tạm của s1 nằm ở `$OUT/work/_tmp` (không dùng /tmp); đĩa $OUT đầy thì `python -m pipeline cleanup` (mục 8) rồi chạy lại với `--cleanup` |
+| `[đĩa] ... tạm dừng crawler` hoặc `[stream] s0_ingest tạm dừng` kéo dài | raw/ hoặc s0 audio vượt 20 GB và stage sau chưa tiêu kịp: bình thường nếu s5 là nút thắt; bất thường nếu thiếu `--cleanup` (thư mục không bao giờ giảm) |
 | `json.decoder.JSONDecodeError: Unterminated string` | manifest/ledger có dòng ghi dở (đĩa đầy hoặc kill giữa lúc ghi). Bản hiện tại tự bỏ qua dòng hỏng và làm lại bản ghi đó; dọn hẳn bằng `python -m pipeline repair --workdir $OUT/work` |
 | `demucs lỗi (mã N)` kèm stderr | đọc stderr in ngay sau: thiếu mạng tải model htdemucs, thiếu ffmpeg, hoặc CUDA OOM |
 | `[serve] sN thoát mã ... khởi động lại (k/5)` | stage chết, xem traceback ngay trước dòng đó; hết 5 lần thì serve dừng, sửa rồi chạy lại |
