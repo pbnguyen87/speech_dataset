@@ -187,12 +187,12 @@ $OUT/
   (`shuf`).
 - Crawler tải nhanh hơn pipeline xử lý nhiều lần. Dữ liệu đang chờ nằm ở stage nút
   thắt (s5) dưới dạng wav s2, khoảng 170 MB mỗi giờ audio, cộng raw chưa qua s0.
-  Hai chốt chặn cùng ngưỡng 20 GB, chạy lại khi giảm dưới 5 GB: crawler dừng khi
-  `raw/` vượt `--max-raw-gb`; s0 (mp3 -> wav gấp 3) dừng khi `work/s0_ingest/audio/`
-  vượt `stream.max_dir_gb` trong config pipeline. Cả hai chỉ có tác dụng khi có
-  `--cleanup` (s0 xóa raw đã chuyển, s2 xóa wav s0 đã cắt), không thì thư mục không
-  bao giờ giảm và hai tiến trình dừng mãi. Dữ liệu tạm tối đa vì thế ~40 GB cộng
-  wav s2 đang chờ s5. Đĩa đã đầy giữa chừng: dừng, chạy
+  Ba chốt chặn cùng ngưỡng 20 GB, chạy lại khi giảm dưới 5 GB: crawler dừng khi
+  `raw/` vượt `--max-raw-gb`; s0 dừng khi `work/s0_ingest/audio/` và s2 dừng khi
+  `work/s2_segment/audio/` vượt `stream.max_dir_gb` trong config pipeline. Chỉ có tác
+  dụng khi có `--cleanup` (s0 xóa raw đã chuyển, s2 xóa wav s0 đã cắt, s7 xóa wav s2
+  đã chuẩn âm), không thì thư mục không bao giờ giảm và các tiến trình dừng mãi.
+  s5 chậm thì s2 đầy trước, kéo theo s0 rồi crawler dừng; dữ liệu tạm tối đa ~60 GB. Đĩa đã đầy giữa chừng: dừng, chạy
   `../audio-pipeline/.venv/bin/python -m pipeline cleanup --workdir $OUT/work --raw-dir $OUT/raw`
   (thêm `--dry-run` để xem trước) rồi chạy lại với `--cleanup`.
 - Đã xóa raw thì không chạy lại được s0-s2 cho file đó (muốn thì xóa dòng
@@ -208,7 +208,7 @@ $OUT/
 | `TorchCodec is required for save_with_torchcodec` (demucs, s1) | torchaudio >= 2.9; cài lại đúng mục 2: `torch==2.8.0 torchaudio==2.8.0` |
 | `demucs lỗi (mã -9)` | OOM killer hết RAM hệ thống (`dmesg -T \| grep -i killed`): demucs nạp cả khúc vào RAM, ~10 GB cho khúc 2 giờ; hạ `separate.chunk_seconds` (vd 1800) trong config pipeline |
 | `CalledProcessError ... ffmpeg ... exit status 228` | ENOSPC, hết đĩa: `df -h /tmp $OUT`. File tạm của s1 nằm ở `$OUT/work/_tmp` (không dùng /tmp); đĩa $OUT đầy thì `python -m pipeline cleanup` (mục 8) rồi chạy lại với `--cleanup` |
-| `[đĩa] ... tạm dừng crawler` hoặc `[stream] s0_ingest tạm dừng` kéo dài | raw/ hoặc s0 audio vượt 20 GB và stage sau chưa tiêu kịp: bình thường nếu s5 là nút thắt; bất thường nếu thiếu `--cleanup` (thư mục không bao giờ giảm) |
+| `[đĩa] ... tạm dừng crawler` hoặc `[stream] s0_ingest/s2_segment tạm dừng` kéo dài | raw/, s0 audio hoặc s2 audio vượt 20 GB và stage sau chưa tiêu kịp: bình thường nếu s5 là nút thắt; bất thường nếu thiếu `--cleanup` (thư mục không bao giờ giảm) |
 | `json.decoder.JSONDecodeError: Unterminated string` | manifest/ledger có dòng ghi dở (đĩa đầy hoặc kill giữa lúc ghi). Bản hiện tại tự bỏ qua dòng hỏng và làm lại bản ghi đó; dọn hẳn bằng `python -m pipeline repair --workdir $OUT/work` |
 | `demucs lỗi (mã N)` kèm stderr | đọc stderr in ngay sau: thiếu mạng tải model htdemucs, thiếu ffmpeg, hoặc CUDA OOM |
 | `[serve] sN thoát mã ... khởi động lại (k/5)` | stage chết, xem traceback ngay trước dòng đó; hết 5 lần thì serve dừng, sửa rồi chạy lại |
