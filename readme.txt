@@ -94,3 +94,15 @@ LƯU Ý:
 - Nếu mạng bị ngắt giữa chừng, chỉ cần chạy lại script — nó sẽ tự tải tiếp
   phần còn dở, không tải lại từ đầu.
 - Nên chạy trong tmux/screen nếu tải qua SSH để tránh mất phiên.
+
+
+KIỂM TRA TRÙNG NỘI DUNG VỚI viVoice / PhoAudiobook (không tải audio)
+-------------------------------------------------------------------
+    pip install duckdb huggingface_hub        # đã login HF + được cấp quyền 2 dataset gated
+    python overlap_check.py --manifest <workdir>/s5_transcribe/manifest.jsonl --out overlap.json
+
+Băm cụm 8 từ trong transcript của ta làm chỉ mục, quét cột text của hai dataset đọc từ
+xa bằng DuckDB (~50 phút cả hai). Báo cáo JSON: số utterance trùng theo speaker/channel,
+file của ta bị chạm, ví dụ đối chiếu. Kết quả 2026-09-18 trên 249 giờ đầu (feed
+"Truyện Audio Sưu Tầm"): 0 đoạn nội dung trùng, 14 ca chạm đều là câu chào/kết của kênh;
+người đọc Trần Vân xuất hiện ở cả PhoAudiobook (trùng giọng, không trùng văn bản).
