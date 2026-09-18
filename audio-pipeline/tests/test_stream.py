@@ -272,6 +272,33 @@ class TestCorruptManifest:
 
     def test_repair_rewrites_without_bad_lines(self, tmp_path):
         p = tmp_path / "manifest.jsonl"; self._write(p)
-        assert manifest.repair(str(p), dry_run=True) == (2, 2)
-        assert manifest.repair(str(p)) == (2, 2)
+        assert manifest.repair(str(p), dry_run=True) == (2, 2, 0)
+        assert manifest.repair(str(p)) == (2, 2, 0)
         assert p.read_text() == json.dumps({"id": "a"}) + "\n" + json.dumps({"id": "c"}) + "\n"
+
+
+class TestRelocate:
+    def test_repair_relocates_absolute_paths(self, tmp_path):
+        p = tmp_path / "manifest.jsonl"
+        p.write_text(json.dumps({"id": "a", "audio_path": "/data/vi/work/s2_segment/audio/a.wav", "source_path": "f/a.mp3"}) + "\n"
+                     + json.dumps({"id": "b", "audio_path": "/khac/b.wav"}) + "\n" + '{"id": "cụt' + "\n")
+        assert manifest.repair(str(p), dry_run=True, relocate=("/data/vi", "/mnt/big/vi")) == (2, 1, 1)
+        assert "/data/vi/" in p.read_text()  # dry-run không ghi
+        manifest.repair(str(p), relocate=("/data/vi/", "/mnt/big/vi"))
+        recs = list(manifest.iter_records(str(p)))
+        assert recs[0]["audio_path"] == "/mnt/big/vi/work/s2_segment/audio/a.wav"
+        assert recs[0]["source_path"] == "f/a.mp3"      # đường dẫn tương đối giữ nguyên
+        assert recs[1]["audio_path"] == "/khac/b.wav"    # không khớp gốc cũ -> giữ nguyên
+        assert len(recs) == 2                            # dòng hỏng đã bỏ
+
+    def test_cli_relocates_ledger_too(self, tmp_path, capsys):
+        from pipeline import cli
+        wd, raw = tmp_path / "work", tmp_path / "raw"
+        (wd / "s0_ingest").mkdir(parents=True); (raw / "s").mkdir(parents=True)
+        (wd / "s0_ingest" / "manifest.jsonl").write_text(json.dumps({"id": "a", "audio_path": "/old/work/x.wav"}) + "\n")
+        (raw / "ledger.jsonl").write_text(json.dumps({"id": "l", "key": "u", "path": "/old/raw/f/a.mp3", "source": "s"}) + "\n")
+        (raw / "s" / "ledger.jsonl").write_text(json.dumps({"id": "m", "key": "v", "path": "/old/raw/s/b.mp3", "source": "s"}) + "\n")
+        cli.main(["repair", "--workdir", str(wd), "--raw-dir", str(raw), "--relocate", "/old", "/new"])
+        assert json.loads((wd / "s0_ingest" / "manifest.jsonl").read_text())["audio_path"] == "/new/work/x.wav"
+        assert json.loads((raw / "ledger.jsonl").read_text())["path"] == "/new/raw/f/a.mp3"
+        assert json.loads((raw / "s" / "ledger.jsonl").read_text())["path"] == "/new/raw/s/b.mp3"

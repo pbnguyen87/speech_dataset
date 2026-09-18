@@ -124,25 +124,44 @@ class ManifestTail:
         return out
 
 
-def repair(path: str, dry_run: bool = False) -> tuple[int, int]:
-    """Ghi lại manifest không còn dòng hỏng. Trả (số dòng giữ, số dòng bỏ)."""
+def relocate_paths(rec: dict, old_root: str, new_root: str, fields=("audio_path", "path")) -> int:
+    """Đổi tiền tố đường dẫn tuyệt đối trong record (audio_path của manifest, path của ledger).
+    Trả số trường đã đổi."""
+    n = 0
+    old_root = old_root.rstrip("/") + "/"
+    new_root = new_root.rstrip("/") + "/"
+    for k in fields:
+        v = rec.get(k)
+        if isinstance(v, str) and v.startswith(old_root):
+            rec[k] = new_root + v[len(old_root):]
+            n += 1
+    return n
+
+
+def repair(path: str, dry_run: bool = False, relocate: tuple[str, str] | None = None) -> tuple[int, int, int]:
+    """Ghi lại manifest không còn dòng hỏng; relocate=(gốc cũ, gốc mới) thì đổi luôn đường dẫn
+    tuyệt đối (chuyển workdir sang máy/đĩa khác). Trả (số dòng giữ, số dòng bỏ, số dòng đổi đường dẫn)."""
     if not os.path.exists(path):
-        return 0, 0
-    keep, bad = [], 0
+        return 0, 0, 0
+    keep, bad, moved = [], 0, 0
     with open(path, encoding="utf-8", errors="replace") as f:
         for line in f:
             s = line.strip()
             if not s:
                 continue
             try:
-                json.loads(s)
-                keep.append(s)
+                rec = json.loads(s)
             except json.JSONDecodeError:
                 bad += 1
-    if bad and not dry_run:
+                continue
+            if relocate and relocate_paths(rec, *relocate):
+                moved += 1
+                s = json.dumps(rec, ensure_ascii=False)
+            keep.append(s)
+    if (bad or moved) and not dry_run:
         tmp = path + ".repair"
         with open(tmp, "w", encoding="utf-8") as f:
             for s in keep:
                 f.write(s + "\n")
         os.replace(tmp, path)
-    return len(keep), bad
+    return len(keep), bad, moved

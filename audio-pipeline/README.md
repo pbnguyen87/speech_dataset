@@ -120,6 +120,8 @@ touch work/INPUT_DONE            # (tools/crawl_and_process.py --stream tự là
 
 python -m pipeline status --workdir work   # số dòng manifest + cờ DONE từng stage
 python -m pipeline cleanup --workdir work --raw-dir raw [--dry-run]   # dọn đĩa hồi tố theo cùng quy tắc --cleanup
+python -m pipeline repair --workdir work [--dry-run]                   # bỏ dòng manifest hỏng (đĩa đầy / kill)
+python -m pipeline repair --workdir work --raw-dir raw --relocate /cũ /mới   # đã copy work+raw sang chỗ khác: đổi đường dẫn tuyệt đối
 ```
 
 Mỗi stage s0–s7 là một tiến trình riêng, nạp model một lần cho cả run. Stage sN

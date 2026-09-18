@@ -199,7 +199,56 @@ $OUT/
   tương ứng trong ledger để crawler tải lại và dòng trong `s0_ingest/manifest.jsonl`). Segment tier C đã xóa không quay
   lại được khi nới ngưỡng tier — muốn thử ngưỡng, chạy mẫu nhỏ không `--cleanup`.
 
-## 9. Lỗi thường gặp
+## 9. Chuyển sang máy hoặc đĩa khác giữa chừng
+
+Mọi tiến độ nằm trong manifest và ledger, nên chuyển `$OUT` đi rồi chạy tiếp được.
+Ví dụ dưới đây: máy cũ `$OUT=/data/vi_podcast`, máy mới `$OUT_MỚI=/mnt/big/vi_podcast`.
+
+1. **Dừng run trên máy cũ**: `kill $(cat $OUT/run.pid)` rồi chờ dòng `[serve] dừng`
+   trong run.log. Máy chết đột ngột hay bị kill -9 cũng không sao: dòng manifest chỉ được
+   ghi sau khi output hoàn chỉnh, nên phần dở (wav viết dở, `.part` trong raw, khúc trong
+   `_tmp`, dòng JSON cụt) sẽ bị bỏ qua hoặc làm lại, nhiều nhất mất một chunk s5 (32 segment)
+   và một file đang ở s1/s2. Bước 4 dọn luôn dòng JSON cụt. Ghi lại tiến độ để so sánh sau:
+   ```bash
+   ../audio-pipeline/.venv/bin/python -m pipeline status --workdir $OUT/work
+   ```
+
+2. **Cài hai repo trên máy mới** theo mục 1 đến 3 (venv, torch cu128, ffmpeg). Muốn
+   khỏi tải lại ~10 GB model thì copy luôn cache: `rsync -a ~/.cache/huggingface ~/.cache/torch máy-mới:~/.cache/`.
+
+3. **Copy dữ liệu**, bỏ hai thư mục tạm:
+   ```bash
+   rsync -a --info=progress2 --exclude _tmp --exclude _staging $OUT/ máy-mới:$OUT_MỚI/
+   ```
+   `work/_tmp` là file tạm của s1 khi đang tách nhạc, `work/_staging` chỉ chế độ lô cũ dùng.
+   Các cờ `INPUT_DONE`, `s*/DONE`, `.gpu.lock`, `raw/PAUSE` copy theo cũng không sao, serve
+   tự xóa lúc khởi động. Phần bắt buộc phải có đủ: `raw/ledger.jsonl` + sidecar `.json`
+   (crawler không tải lại), `raw/<feed>/*.mp3` còn lại (chưa qua s0), `work/s*/manifest.jsonl`
+   (dấu đã làm), `work/s*/audio/` (wav đang chờ stage sau; wav s7 là sản phẩm),
+   `work/s0_ingest/skipped.jsonl`.
+
+4. **Đổi đường dẫn tuyệt đối** trong manifest và ledger (chỉ khi `$OUT_MỚI` khác `$OUT`;
+   cùng đường dẫn thì bỏ qua bước này):
+   ```bash
+   cd audio-pipeline && source .venv/bin/activate
+   python -m pipeline repair --workdir $OUT_MỚI/work --raw-dir $OUT_MỚI/raw \
+       --relocate $OUT $OUT_MỚI --dry-run          # in số dòng sẽ đổi từng file, chưa ghi
+   python -m pipeline repair --workdir $OUT_MỚI/work --raw-dir $OUT_MỚI/raw \
+       --relocate $OUT $OUT_MỚI
+   ```
+   Lệnh này đổi tiền tố của `audio_path` trong 9 manifest và `path` trong ledger,
+   đường dẫn tương đối như `source_path` giữ nguyên, đồng thời bỏ luôn dòng JSON hỏng nếu có.
+
+5. **Kiểm tra rồi chạy tiếp** với lệnh mục 5 nhưng `OUT=$OUT_MỚI`:
+   ```bash
+   python -m pipeline status --workdir $OUT_MỚI/work     # số dòng phải bằng bước 1
+   ls $OUT_MỚI/work/s2_segment/audio | head            # wav còn nguyên
+   ```
+   Crawler đọc ledger nên không tải lại tập đã có; các stage đọc manifest nên chỉ làm phần
+   còn thiếu. Nếu quên bước 4, stage đầu tiên cần wav sẽ báo `No such file or directory`
+   với đường dẫn máy cũ, chạy lại bước 4 là xong.
+
+## 10. Lỗi thường gặp
 
 | Hiện tượng | Xử lý |
 |---|---|

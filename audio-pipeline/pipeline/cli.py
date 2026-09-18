@@ -3,6 +3,7 @@
      python -m pipeline status --workdir ./work
      python -m pipeline cleanup --workdir ./work --raw-dir ./raw [--dry-run]   # dọn đĩa hồi tố
      python -m pipeline repair --workdir ./work [--dry-run]    # bỏ dòng manifest hỏng (đĩa đầy/kill)
+     python -m pipeline repair --workdir W --raw-dir R --relocate /cũ /mới   # chuyển workdir+raw sang chỗ khác
 
 Mỗi stage được chạy trong một SUBPROCESS riêng (qua pipeline.stage_runner):
 torch (s1/s4/s5-verify) và ctranslate2 (s5-primary) cùng nhúng OpenMP runtime,
@@ -84,24 +85,37 @@ def main(argv=None):
     p.add_argument("--raw-dir", help="có thì xóa cả audio raw đã qua s0 (giữ sidecar .json)")
     p.add_argument("--dry-run", action="store_true", help="chỉ tính dung lượng, không xóa")
 
-    p = sub.add_parser("repair", help="loại dòng JSON hỏng (ghi dở khi đĩa đầy/kill) khỏi mọi manifest.jsonl")
+    p = sub.add_parser("repair", help="loại dòng JSON hỏng (ghi dở khi đĩa đầy/kill) khỏi mọi manifest.jsonl; "
+                                      "--relocate đổi đường dẫn tuyệt đối khi chuyển workdir/raw sang chỗ khác")
     p.add_argument("--workdir", required=True)
+    p.add_argument("--raw-dir", help="có thì sửa cả path trong ledger.jsonl của crawler (khi --relocate)")
+    p.add_argument("--relocate", nargs=2, metavar=("GỐC_CŨ", "GỐC_MỚI"),
+                   help="đổi tiền tố đường dẫn, vd --relocate /data/vi_podcast /mnt/big/vi_podcast")
     p.add_argument("--dry-run", action="store_true")
 
     args = parser.parse_args(argv)
 
     import os
     if args.cmd == "repair":
+        import glob
         from .manifest import repair
         from .stream import STAGES, FINAL
-        total = 0
-        for st in STAGES + [FINAL]:
-            path = os.path.join(args.workdir, st, "manifest.jsonl")
-            keep, bad = repair(path, args.dry_run)
-            if bad:
-                print(f"  {st}: {bad} dòng hỏng {'(sẽ bỏ)' if args.dry_run else 'đã bỏ'}, giữ {keep}")
-            total += bad
-        print(f"[repair] {total} dòng hỏng" + (" — bản ghi đó sẽ được stage làm lại khi chạy tiếp" if total else ""))
+        reloc = tuple(args.relocate) if args.relocate else None
+        paths = [os.path.join(args.workdir, st, "manifest.jsonl") for st in STAGES + [FINAL]]
+        if args.raw_dir:
+            paths += glob.glob(os.path.join(args.raw_dir, "ledger.jsonl")) + \
+                glob.glob(os.path.join(args.raw_dir, "*", "ledger.jsonl"))
+        base = os.path.dirname(os.path.abspath(args.workdir))
+        total_bad = total_moved = 0
+        for path in paths:
+            keep, bad, moved = repair(path, args.dry_run, reloc)
+            if bad or moved:
+                print(f"  {os.path.relpath(path, base)}: giữ {keep}, hỏng {bad}, đổi đường dẫn {moved}")
+            total_bad += bad
+            total_moved += moved
+        note = " (dry-run, chưa ghi)" if args.dry_run else ""
+        print(f"[repair] {total_bad} dòng hỏng" + (" — stage sẽ làm lại bản ghi đó" if total_bad else "")
+              + (f", {total_moved} dòng đổi {reloc[0]} -> {reloc[1]}" if reloc else "") + note)
         return
     if args.cmd == "status":
         from .stream import status_line
