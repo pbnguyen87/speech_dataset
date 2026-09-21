@@ -6,10 +6,19 @@ Output trong workdir/s8_package/:
   report.html                              (thống kê)
 
 Stage này rẻ — đổi ngưỡng tier trong config chỉ cần chạy lại mình s8.
+
+Hai cách chạy:
+  run()                 : xây lại toàn bộ từ manifest s7 (pipeline run --stages s8 / cuối serve).
+  package_incremental() : `python -m pipeline package` — chỉ gói segment s7 chưa có trong
+                          manifest s8, nối thêm vào dataset đang có; chạy tay mỗi khi s7 có
+                          thêm file. Wav s7 đã gói có thể xóa, lệnh không đọc lại chúng.
 """
 
 import csv
+import glob
 import hashlib
+import io
+import json
 import os
 import shutil
 
@@ -79,6 +88,20 @@ def assign_split(speaker_id: str, val_ratio: float, test_ratio: float,
     return "train"
 
 
+CONFIG_HASH_FILE = "config_hash"
+
+
+def config_hash(pcfg: dict) -> str:
+    """Hash phần config quyết định tier/split — đổi thì dataset đang có không còn nhất quán."""
+    key = {"tiers": pcfg["tiers"], "keep_tiers": pcfg.get("keep_tiers"), "split": pcfg["split"]}
+    return hashlib.sha1(json.dumps(key, sort_keys=True, ensure_ascii=False).encode()).hexdigest()[:12]
+
+
+def _write_config_hash(out_dir: str, pcfg: dict) -> None:
+    with open(os.path.join(out_dir, CONFIG_HASH_FILE), "w") as f:
+        f.write(config_hash(pcfg) + "\n")
+
+
 def run(cfg: dict, workdir: str, limit: int | None = None) -> str:
     pcfg = cfg["package"]
     records = manifest.read_records(manifest.manifest_path(workdir, PREV))
@@ -129,8 +152,9 @@ def run(cfg: dict, workdir: str, limit: int | None = None) -> str:
         for rec in records:
             w.write(rec)
 
-    # 4) report
+    # 4) report + hash config (để `pipeline package` biết dataset được gán tier theo config nào)
     _write_report(records, keep_tiers, os.path.join(out_dir, "report.html"))
+    _write_config_hash(out_dir, pcfg)
 
     # 5) stream.cleanup: xóa wav s7 của tier C (không vào dataset; tier A/B giữ vì s8 xây lại từ đó)
     if cfg.get("stream", {}).get("cleanup"):
@@ -146,7 +170,9 @@ def run(cfg: dict, workdir: str, limit: int | None = None) -> str:
     return mpath
 
 
-def _write_parquet(records: list[dict], out_dir: str, shard_max_mb: int) -> None:
+def _write_parquet(records: list[dict], out_dir: str, shard_max_mb: int, prefix: str = "",
+                   quiet: bool = False) -> None:
+    """Shard `{split}-{prefix}{NNNNN}.parquet`; ghi .tmp rồi rename để không có shard cụt."""
     import pyarrow as pa
     import pyarrow.parquet as pq
 
@@ -172,7 +198,9 @@ def _write_parquet(records: list[dict], out_dir: str, shard_max_mb: int) -> None
                 "duration": [r["duration"] for r in rows],
                 "tier": [r["tier"] for r in rows],
             })
-            pq.write_table(table, os.path.join(out_dir, f"{split}-{shard:05d}.parquet"))
+            path = os.path.join(out_dir, f"{split}-{prefix}{shard:05d}.parquet")
+            pq.write_table(table, path + ".tmp")
+            os.replace(path + ".tmp", path)
             rows, size, shard = [], 0, shard + 1
 
         for r in recs:
@@ -188,7 +216,8 @@ def _write_parquet(records: list[dict], out_dir: str, shard_max_mb: int) -> None
             if size >= max_bytes:
                 flush()
         flush()
-        print(f"  parquet[{split}]: {shard} shard")
+        if not quiet:
+            print(f"  parquet[{split}]: {shard} shard")
 
 
 def _write_report(records: list[dict], keep_tiers: list | None, path: str) -> None:
@@ -226,3 +255,167 @@ table{{border-collapse:collapse;margin:1rem 0}}td,th{{border:1px solid #999;padd
 """
     with open(path, "w", encoding="utf-8") as f:
         f.write(html)
+
+
+# ---------------------------------------------------------------- gói phần mới (chạy tay)
+def _link_or_copy(src: str, dst: str, copy: bool) -> None:
+    """Hardlink (không tốn đĩa, cùng filesystem) hoặc copy; đã có đích thì bỏ qua."""
+    if os.path.exists(dst):
+        return
+    if not copy:
+        try:
+            os.link(src, dst)
+            return
+        except OSError:  # khác filesystem / fs không hỗ trợ -> copy
+            pass
+    shutil.copy2(src, dst)
+
+
+def reconcile_csv(csv_path: str, done_ids: set) -> int:
+    """Bỏ dòng metadata.csv mà segment không có trong manifest s8 (crash giữa lúc ghi csv và
+    ghi manifest của một lô). Trả số dòng đã bỏ."""
+    if not os.path.exists(csv_path):
+        return 0
+    with open(csv_path, newline="", encoding="utf-8") as f:
+        rdr = csv.DictReader(f)
+        fields = rdr.fieldnames
+        rows = list(rdr)
+    keep = [r for r in rows if os.path.splitext(os.path.basename(r["file_name"]))[0] in done_ids]
+    removed = len(rows) - len(keep)
+    if removed and fields:
+        tmp = csv_path + ".tmp"
+        with open(tmp, "w", newline="", encoding="utf-8") as f:
+            w = csv.DictWriter(f, fieldnames=fields)
+            w.writeheader()
+            w.writerows(keep)
+        os.replace(tmp, csv_path)
+    return removed
+
+
+def _append_csv(csv_path: str, rows: list[dict]) -> None:
+    """Nối các dòng bằng một lần write; tạo header nếu file chưa có / rỗng."""
+    fields = META_COLS + ["split"]
+    need_header = not os.path.exists(csv_path) or os.path.getsize(csv_path) == 0
+    buf = io.StringIO()
+    w = csv.DictWriter(buf, fieldnames=fields)
+    if need_header:
+        w.writeheader()
+    w.writerows(rows)
+    with open(csv_path, "a", newline="", encoding="utf-8") as f:
+        f.write(buf.getvalue())
+        f.flush()
+
+
+def package_incremental(cfg: dict, workdir: str, cleanup: bool = False, copy: bool = False,
+                        dry_run: bool = False, chunk: int = 2000, drop_wav: bool = False) -> dict:
+    """Gói segment s7 chưa có trong manifest s8, nối vào dataset đang có (cùng layout với run()).
+
+    Mỗi lô `chunk` segment: gán tier/split -> link wav tier giữ vào dataset/wav/{split}/ ->
+    parquet `{split}-inc-{hash8}-NNNNN.parquet` (hash8 từ id đầu lô: chạy lại sau crash ra
+    đúng tên, ghi đè) -> csv một lần write -> manifest một lần write (dấu đã gói) -> xóa wav
+    s7 tier C nếu cleanup. Wav của segment đã gói không được đọc lại nên xóa ở s7 được.
+    drop_wav: dataset chỉ là parquet — không link wav vào dataset/wav/, và sau khi lô đã nằm
+    trong parquet + manifest thì xóa wav s7 của segment đó (đĩa chỉ cần dư ~1 lô). Cần
+    parquet bật; wav khôi phục lại được từ parquet (extract_audio.py --raw).
+    Trả thống kê {"new", "kept", "skipped_missing", "csv_removed", "dropped"}.
+    """
+    pcfg = cfg["package"]
+    if drop_wav and not pcfg["parquet"]["enabled"]:
+        raise SystemExit(f"[{STAGE}] --drop-wav cần package.parquet.enabled: true (parquet là bản duy nhất còn lại)")
+    out_dir = manifest.stage_dir(workdir, STAGE)
+    mpath = manifest.manifest_path(workdir, STAGE)
+    ds_dir = os.path.join(out_dir, "dataset")
+    csv_path = os.path.join(ds_dir, "metadata.csv")
+    keep_tiers = pcfg.get("keep_tiers")
+    s7_audio = os.path.abspath(os.path.join(workdir, "s7_loudnorm", "audio"))
+    stats = {"new": 0, "kept": 0, "skipped_missing": 0, "csv_removed": 0, "dropped": 0}
+
+    hpath = os.path.join(out_dir, CONFIG_HASH_FILE)
+    cur = config_hash(pcfg)
+    if os.path.exists(hpath):
+        old = open(hpath).read().strip()
+        if old != cur:
+            raise SystemExit(f"[{STAGE}] config tier/split đã đổi ({old} -> {cur}) so với dataset đang có; "
+                             f"nối thêm sẽ không nhất quán. Chạy full: python -m pipeline run --stages s8")
+
+    done = manifest.done_ids(mpath)
+    w = None
+    if not dry_run:
+        stats["csv_removed"] = reconcile_csv(csv_path, done)
+        if stats["csv_removed"]:
+            print(f"[{STAGE}] bỏ {stats['csv_removed']} dòng metadata.csv không có trong manifest (lô ghi dở)")
+        w = manifest.ManifestWriter(mpath)
+
+    new = [r for r in manifest.iter_records(manifest.manifest_path(workdir, PREV)) if r["id"] not in done]
+    stats["new"] = len(new)
+    print(f"[{STAGE}] {len(new)} segment mới ở s7 chưa gói (đã gói: {len(done)})")
+    if not new:
+        if w:
+            w.close()
+        return stats
+
+    for c0 in range(0, len(new), chunk):
+        batch = []
+        for rec in new[c0:c0 + chunk]:
+            rec = dict(rec)
+            rec["source_path"] = normalize_source_path(rec.get("source_path"))
+            rec["tier"] = assign_tier(rec, pcfg["tiers"])
+            rec["split"] = assign_split(rec.get("speaker_id", rec["file_id"]), pcfg["split"]["val_ratio"],
+                                        pcfg["split"]["test_ratio"], pcfg["split"]["seed"])
+            if keep_record(rec, keep_tiers) and not os.path.exists(rec["audio_path"]):
+                # thiếu wav của segment sẽ vào dataset: không ghi manifest để lần sau thử lại
+                print(f"  thiếu wav {rec['audio_path']} ({rec['id']}, tier {rec['tier']}) — bỏ qua lần này")
+                stats["skipped_missing"] += 1
+                continue
+            batch.append(rec)
+        kept = [r for r in batch if keep_record(r, keep_tiers)]
+        stats["kept"] += len(kept)
+        n_c = sum(1 for r in batch if r["tier"] == "C")
+        tag = "(dry-run) " if dry_run else ""
+        print(f"  {tag}lô {c0 // chunk + 1}: {len(batch)} segment, giữ {len(kept)}, tier C {n_c}")
+        if dry_run or not batch:
+            continue
+
+        # 1) wav vào dataset/wav/{split}/ (cùng layout run()); drop_wav: chỉ ghi tên, không link
+        rows = []
+        for r in kept:
+            rel = os.path.join("wav", r["split"], os.path.basename(r["audio_path"]))
+            if not drop_wav:
+                dst = os.path.join(ds_dir, rel)
+                os.makedirs(os.path.dirname(dst), exist_ok=True)
+                _link_or_copy(r["audio_path"], dst, copy)
+            rows.append({c: r.get(c) for c in META_COLS} | {"file_name": rel, "split": r["split"]})
+        # 2) parquet: tên suy từ id đầu lô -> chạy lại lô này ghi đè đúng file cũ
+        if pcfg["parquet"]["enabled"] and kept:
+            h8 = hashlib.sha1(batch[0]["id"].encode()).hexdigest()[:8]
+            _write_parquet(kept, os.path.join(ds_dir, "parquet"), pcfg["parquet"]["shard_max_mb"],
+                           prefix=f"inc-{h8}-", quiet=True)
+        # 3) csv rồi 4) manifest — mỗi thứ một lần write; manifest là dấu đã gói
+        os.makedirs(ds_dir, exist_ok=True)
+        if rows:
+            _append_csv(csv_path, rows)
+        w.write_many(batch)  # dấu đã gói
+        # 5) cleanup: wav s7 của tier C trong lô; drop_wav: cả wav A/B đã nằm trong parquet
+        n_c = n_d = 0
+        for r in batch:
+            p = os.path.abspath(r.get("audio_path", ""))
+            if not p.startswith(s7_audio + os.sep) or not os.path.isfile(p):
+                continue
+            if r["tier"] == "C" and cleanup:
+                os.remove(p)
+                n_c += 1
+            elif r["tier"] != "C" and drop_wav and keep_record(r, keep_tiers):
+                os.remove(p)
+                n_d += 1
+        stats["dropped"] += n_d
+        if n_c or n_d:
+            print(f"  xóa wav s7: {n_c} tier C" + (f", {n_d} đã vào parquet" if n_d else ""))
+    if w:
+        w.close()
+
+    if not dry_run:
+        _write_config_hash(out_dir, pcfg)
+        _write_report(manifest.read_records(mpath), keep_tiers, os.path.join(out_dir, "report.html"))
+        print(f"[{STAGE}] xong — gói thêm {stats['new'] - stats['skipped_missing']} segment "
+              f"(giữ {stats['kept']}), dataset: {ds_dir}")
+    return stats

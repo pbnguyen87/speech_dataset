@@ -50,7 +50,7 @@ raw audio ──► s0 ingest ──► s1 separate ──► s2 segment ──�
 | **s5 transcribe** | Transcribe bằng model chính (faster-whisper large-v3), transcribe lại bằng model kiểm chứng (PhoWhisper-large), tính CER giữa 2 bản → độ tin cậy transcript | faster-whisper, transformers | Bước tốn nhất; resume theo từng segment; model/beam/compute_type chọn trong config; mps rơi về cpu cho faster-whisper (ctranslate2 không hỗ trợ mps) |
 | **s6 textnorm** | Chuẩn hóa transcript: số → chữ tiếng Việt, viết tắt, khoảng trắng; giữ cả bản raw (`text`) và bản chuẩn hóa (`text_normalized`) | vinorm, fallback bộ chuyển số→chữ tự viết | Chỉ chạy trên transcript của model chính |
 | **s7 loudnorm** | Chuẩn hóa âm lượng về mức thống nhất | ffmpeg loudnorm (−23 LUFS) hoặc peak norm, config được | Tắt được qua `loudnorm.mode: off` |
-| **s8 package** | Gán **quality tier** theo rule config; chia train/val/test **theo speaker** (hash ổn định, tránh leak giọng); xuất dataset + report | pyarrow, csv | Stage rẻ nhất — đổi ngưỡng tier chỉ chạy lại mình s8 |
+| **s8 package** | Gán **quality tier** theo rule config; xuất dataset + report. Chia train/val/test **theo speaker** có sẵn nhưng **mặc định tắt** (`split.val_ratio`/`test_ratio` = 0, mọi segment vào `train`; chia lúc training) | pyarrow, csv | Stage rẻ nhất — đổi ngưỡng tier chỉ chạy lại mình s8 |
 
 ## Rule gán tier (mặc định, chỉnh trong `config/default.yaml`)
 
@@ -108,6 +108,37 @@ CLI:
 - `--limit N`: chỉ xử lý N item đầu mỗi stage — dùng chạy thử trước khi chạy full
 - `--device`: override `cpu|cuda|mps` (mặc định `auto` trong config)
 - `--config`: lặp lại được, file sau override file trước theo từng key
+
+### Gói dần bằng tay: `pipeline package`
+
+```bash
+python -m pipeline package --workdir work [--cleanup] [--copy] [--dry-run]
+```
+
+Khác `--stages s8` (xây lại toàn bộ dataset từ đầu), lệnh này chỉ gói những segment
+s7 **chưa có trong manifest s8** rồi nối vào dataset đang có, cùng layout. Chạy tay mỗi
+khi s7 có thêm file, gọi lặp bao nhiêu lần cũng được, kể cả khi `serve` đang chạy.
+
+- Dấu "đã gói" là dòng trong `s8_package/manifest.jsonl`; wav của segment đã gói không
+  bao giờ được đọc lại, nên **xóa wav ở `s7_loudnorm/audio/` sau khi gói được**. Nhưng
+  khi đó không chạy lại được `--stages s8` (nó copy lại từ s7).
+- Wav vào `dataset/wav/` bằng hardlink (không tốn thêm đĩa; `--copy` để copy như cũ).
+- Parquet mỗi lô một shard `{split}-inc-{hash}-NNNNN.parquet`, tên suy từ id đầu lô nên
+  crash rồi chạy lại ghi đè đúng file; dòng `metadata.csv` không có trong manifest bị dọn
+  lúc khởi động. Không sinh dòng trùng.
+- `s8_package/config_hash` ghi lại `package.tiers/keep_tiers/split` đã dùng; đổi ngưỡng
+  tier thì lệnh từ chối nối thêm, phải chạy full `--stages s8`.
+- `--cleanup`: xóa wav s7 của tier C vừa gán. `report.html` sinh lại sau mỗi lần chạy.
+- Không chia train/val/test (config mặc định `split.val_ratio: 0`, `test_ratio: 0`): mọi segment vào
+  `train`. Đặt tỷ lệ khác là đổi config split, `package` sẽ từ chối nối thêm, phải xây lại từ đầu.
+- Dùng cùng chế độ stream: `serve --no-s8` để supervisor không chạy full s8 khi s7 xong (full s8
+  xây lại `dataset/` từ wav s7, lỗi nếu đã `--drop-wav` và đổi tên mọi shard). Quy trình đầy đủ
+  gói dần + đẩy Hugging Face: `audio-crawler/docs/RUN_GPU.md` mục 11.
+- `--drop-wav`: dataset chỉ giữ parquet — không link wav vào `dataset/wav/`, và xóa wav s7
+  của segment ngay sau khi lô đã nằm trong parquet + manifest, nên đĩa chỉ cần dư ~1 lô
+  (2000 segment ≈ 1 GB). Parquet chứa nguyên bytes wav, khôi phục bằng
+  `extract_audio.py --input dataset/parquet --out wav --raw`. `metadata.csv` vẫn ghi
+  `file_name` dạng `wav/{split}/x.wav` để đối chiếu dù file không tồn tại.
 
 ### Chế độ stream: 8 stage chạy song song
 

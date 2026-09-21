@@ -85,6 +85,15 @@ class ManifestWriter:
         self._fh.flush()
         self.done.add(rec[self.key])
 
+    def write_many(self, recs: list[dict]) -> None:
+        """Ghi nhiều record bằng MỘT lần write + flush: tiến trình bị kill giữa chừng thì
+        hoặc cả lô có đủ, hoặc không có gì (đủ cho kill/OOM; không bảo đảm khi mất điện)."""
+        if not recs:
+            return
+        self._fh.write("".join(json.dumps(r, ensure_ascii=False) + "\n" for r in recs))
+        self._fh.flush()
+        self.done.update(r[self.key] for r in recs)
+
     def close(self) -> None:
         self._fh.close()
 

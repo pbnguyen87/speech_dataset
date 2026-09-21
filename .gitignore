@@ -19,3 +19,4 @@ pretrained_models/
 # file tạm của vim
 *.swp
 *.swo
+_hf_staging/

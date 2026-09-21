@@ -298,7 +298,9 @@ thành dataset dùng được ngay cho training.
      file override, không phải xóa block tier. Tier vẫn được gán đầy đủ trong
      manifest; keep_tiers chỉ lọc lúc copy vào dataset. Tier C không bao giờ
      được xuất kể cả khi liệt kê.
-2. **Chia train/val/test theo speaker:** hash SHA1 của `"{seed}:{speaker_id}"`
+2. **Chia train/val/test theo speaker — mặc định TẮT:** `config/default.yaml` đặt
+   `split.val_ratio: 0`, `test_ratio: 0` nên mọi segment vào `train`, việc chia để lúc
+   training (nên chia theo `speaker_id`). Cơ chế vẫn giữ nếu cần bật: hash SHA1 của `"{seed}:{speaker_id}"`
    → số thực u ∈ [0,1) → so với `test_ratio`/`val_ratio` (mặc định 2%/2%).
    Chia theo *speaker* chứ không theo segment để giọng trong test là giọng model
    chưa từng nghe; hash ổn định nên chạy lại không xáo split.
@@ -316,3 +318,11 @@ thành dataset dùng được ngay cho training.
 **Tính chất quan trọng nhất:** s8 rẻ (không inference). Muốn thử ngưỡng lọc
 khác — đổi `package.tiers` trong config rồi chạy `--stages s8`, vài giây có
 dataset mới, không đụng gì các stage đắt phía trước.
+
+**Gói dần (`python -m pipeline package`):** với dữ liệu lớn, xây lại toàn bộ dataset
+mỗi lần s8 chạy tốn nhiều giờ copy. Lệnh `package` là đường thứ hai, chạy tay: chỉ
+lấy segment s7 chưa có trong manifest s8, gán tier/split bằng đúng hàm trên, hardlink
+wav vào `dataset/wav/{split}/`, ghi parquet shard riêng cho lô, nối `metadata.csv`,
+rồi ghi manifest một lần cho cả lô (dấu đã gói). Wav s7 của segment đã gói có thể xóa.
+Config tier/split được hash vào `s8_package/config_hash`; đổi config thì phải quay về
+`--stages s8` để xây lại từ đầu (cần wav s7 còn đủ).

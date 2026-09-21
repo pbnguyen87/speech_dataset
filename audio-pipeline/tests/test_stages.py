@@ -254,3 +254,200 @@ class TestPackageEmpty:
                            "parquet": {"enabled": False}}}
         s8_package.run(cfg, wd)
         assert (tmp_path / "s8_package" / "dataset" / "metadata.csv").read_text().count("\n") == 1  # chỉ header
+
+
+class TestPackageIncremental:
+    """`pipeline package`: gói phần s7 mới, nối vào dataset đang có."""
+
+    CFG = {"package": {"tiers": TIERS, "keep_tiers": None,
+                       "split": {"val_ratio": 0.02, "test_ratio": 0.02, "seed": 1},
+                       "parquet": {"enabled": True, "shard_max_mb": 500}}}
+
+    @staticmethod
+    def _wav(path):
+        import soundfile as sf
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        sf.write(path, np.zeros(2400, dtype="float32"), 24000)
+
+    def _add_s7(self, wd, ids, cer=0.01):
+        """Thêm segment vào manifest s7 kèm wav; trả về danh sách record."""
+        from pipeline import manifest
+        recs = []
+        with manifest.ManifestWriter(manifest.manifest_path(wd, "s7_loudnorm")) as w:
+            for i in ids:
+                p = os.path.join(wd, "s7_loudnorm", "audio", f"{i}.wav")
+                self._wav(p)
+                r = rec(id=i, file_id=i.split("_")[0], speaker_id=i.split("_")[0] + "_spk0", audio_path=p, cer=cer)
+                w.write(r)
+                recs.append(r)
+        return recs
+
+    @staticmethod
+    def _csv_ids(wd):
+        import csv
+        p = os.path.join(wd, "s8_package", "dataset", "metadata.csv")
+        if not os.path.exists(p):
+            return []
+        with open(p, newline="", encoding="utf-8") as f:
+            return [os.path.splitext(os.path.basename(r["file_name"]))[0] for r in csv.DictReader(f)]
+
+    @staticmethod
+    def _parquet_ids(wd):
+        import glob
+        import pyarrow.parquet as pq
+        out = []
+        for p in glob.glob(os.path.join(wd, "s8_package", "dataset", "parquet", "*.parquet")):
+            out += [os.path.splitext(x["path"])[0] for x in pq.read_table(p).column("audio").to_pylist()]
+        return out
+
+    def test_second_run_packs_only_new(self, tmp_path):
+        from pipeline import manifest
+        from pipeline.stages.s8_package import package_incremental
+        wd = str(tmp_path)
+        self._add_s7(wd, ["f1_a", "f1_b", "f2_a"])
+        st = package_incremental(self.CFG, wd)
+        assert st["new"] == 3 and st["kept"] == 3
+        self._add_s7(wd, ["f3_a", "f3_b"])
+        st = package_incremental(self.CFG, wd)
+        assert st["new"] == 2
+        done = manifest.done_ids(manifest.manifest_path(wd, "s8_package"))
+        assert done == {"f1_a", "f1_b", "f2_a", "f3_a", "f3_b"}
+        assert sorted(self._csv_ids(wd)) == sorted(done)
+        assert sorted(self._parquet_ids(wd)) == sorted(done)
+        assert (tmp_path / "s8_package" / "report.html").exists()
+        assert (tmp_path / "s8_package" / "config_hash").exists()
+        # hardlink: cùng inode với wav s7
+        src = tmp_path / "s7_loudnorm" / "audio" / "f1_a.wav"
+        assert os.stat(src).st_nlink == 2
+        st = package_incremental(self.CFG, wd)
+        assert st["new"] == 0
+
+    def test_tier_c_not_in_dataset_but_in_manifest(self, tmp_path):
+        from pipeline import manifest
+        from pipeline.stages.s8_package import package_incremental
+        wd = str(tmp_path)
+        self._add_s7(wd, ["f1_a"], cer=0.9)
+        package_incremental(self.CFG, wd, cleanup=True)
+        recs = manifest.read_records(manifest.manifest_path(wd, "s8_package"))
+        assert recs[0]["tier"] == "C"
+        assert self._csv_ids(wd) == []
+        assert not os.path.exists(os.path.join(wd, "s7_loudnorm", "audio", "f1_a.wav"))  # cleanup xóa tier C
+
+    def test_deleted_s7_wav_of_packed_segments_is_fine(self, tmp_path):
+        from pipeline.stages.s8_package import package_incremental
+        wd = str(tmp_path)
+        self._add_s7(wd, ["f1_a", "f1_b"])
+        package_incremental(self.CFG, wd, copy=True)
+        for i in ("f1_a", "f1_b"):
+            os.remove(os.path.join(wd, "s7_loudnorm", "audio", f"{i}.wav"))
+        self._add_s7(wd, ["f2_a"])
+        st = package_incremental(self.CFG, wd, copy=True)
+        assert st["new"] == 1 and st["skipped_missing"] == 0
+        assert sorted(self._csv_ids(wd)) == ["f1_a", "f1_b", "f2_a"]
+
+    def test_missing_wav_of_new_kept_segment_is_retried_later(self, tmp_path):
+        from pipeline import manifest
+        from pipeline.stages.s8_package import package_incremental
+        wd = str(tmp_path)
+        self._add_s7(wd, ["f1_a", "f1_b"])
+        os.remove(os.path.join(wd, "s7_loudnorm", "audio", "f1_b.wav"))
+        st = package_incremental(self.CFG, wd)
+        assert st["skipped_missing"] == 1
+        assert manifest.done_ids(manifest.manifest_path(wd, "s8_package")) == {"f1_a"}
+        self._wav(os.path.join(wd, "s7_loudnorm", "audio", "f1_b.wav"))
+        st = package_incremental(self.CFG, wd)
+        assert st["new"] == 1 and st["skipped_missing"] == 0
+
+    def test_crash_before_manifest_leaves_no_duplicates(self, tmp_path, monkeypatch):
+        from pipeline import manifest
+        from pipeline.stages.s8_package import package_incremental
+        wd = str(tmp_path)
+        self._add_s7(wd, ["f1_a", "f1_b", "f1_c"])
+        real = manifest.ManifestWriter.write_many
+
+        def boom(self, recs):
+            raise RuntimeError("kill giữa chừng")
+
+        monkeypatch.setattr(manifest.ManifestWriter, "write_many", boom)
+        with pytest.raises(RuntimeError):
+            package_incremental(self.CFG, wd)
+        # csv + parquet đã ghi, manifest chưa -> chạy lại phải dọn csv mồ côi và ghi đè parquet
+        assert len(self._csv_ids(wd)) == 3
+        monkeypatch.setattr(manifest.ManifestWriter, "write_many", real)
+        st = package_incremental(self.CFG, wd)
+        assert st["csv_removed"] == 3 and st["new"] == 3
+        assert sorted(self._csv_ids(wd)) == ["f1_a", "f1_b", "f1_c"]
+        assert sorted(self._parquet_ids(wd)) == ["f1_a", "f1_b", "f1_c"]
+
+    def test_chunks_split_parquet_by_batch(self, tmp_path):
+        from pipeline.stages.s8_package import package_incremental
+        wd = str(tmp_path)
+        self._add_s7(wd, [f"f{i}_a" for i in range(5)])
+        package_incremental(self.CFG, wd, chunk=2)
+        import glob
+        shards = glob.glob(os.path.join(wd, "s8_package", "dataset", "parquet", "*-inc-*.parquet"))
+        assert len(shards) == 3
+        assert sorted(self._parquet_ids(wd)) == sorted(f"f{i}_a" for i in range(5))
+
+    def test_config_change_is_refused(self, tmp_path):
+        import copy
+        from pipeline.stages.s8_package import package_incremental
+        wd = str(tmp_path)
+        self._add_s7(wd, ["f1_a"])
+        package_incremental(self.CFG, wd)
+        cfg = copy.deepcopy(self.CFG)
+        cfg["package"]["tiers"]["A"]["max_cer"] = 0.001
+        with pytest.raises(SystemExit, match="config tier/split đã đổi"):
+            package_incremental(cfg, wd)
+
+    def test_after_full_run_incremental_continues(self, tmp_path):
+        from pipeline import manifest
+        from pipeline.stages import s8_package
+        wd = str(tmp_path)
+        self._add_s7(wd, ["f1_a", "f1_b"])
+        s8_package.run(self.CFG, wd)
+        self._add_s7(wd, ["f2_a"])
+        st = s8_package.package_incremental(self.CFG, wd)
+        assert st["new"] == 1
+        assert manifest.done_ids(manifest.manifest_path(wd, "s8_package")) == {"f1_a", "f1_b", "f2_a"}
+        assert sorted(self._csv_ids(wd)) == ["f1_a", "f1_b", "f2_a"]
+        assert sorted(self._parquet_ids(wd)) == ["f1_a", "f1_b", "f2_a"]
+
+    def test_dry_run_writes_nothing(self, tmp_path):
+        from pipeline.stages.s8_package import package_incremental
+        wd = str(tmp_path)
+        self._add_s7(wd, ["f1_a"])
+        st = package_incremental(self.CFG, wd, dry_run=True)
+        assert st["new"] == 1
+        assert not os.path.exists(os.path.join(wd, "s8_package", "manifest.jsonl"))
+        assert not os.path.exists(os.path.join(wd, "s8_package", "dataset"))
+
+    def test_drop_wav_keeps_only_parquet(self, tmp_path):
+        from pipeline.stages.s8_package import package_incremental
+        wd = str(tmp_path)
+        self._add_s7(wd, ["f1_a", "f1_b"])
+        self._add_s7(wd, ["f2_a"], cer=0.9)  # tier C
+        st = package_incremental(self.CFG, wd, cleanup=True, drop_wav=True)
+        assert st["dropped"] == 2
+        assert sorted(self._parquet_ids(wd)) == ["f1_a", "f1_b"]
+        assert sorted(self._csv_ids(wd)) == ["f1_a", "f1_b"]
+        assert not os.path.exists(os.path.join(wd, "s8_package", "dataset", "wav"))
+        assert os.listdir(os.path.join(wd, "s7_loudnorm", "audio")) == []  # A/B đã vào parquet, C bị cleanup
+        # parquet giữ nguyên bytes wav
+        import glob
+        import pyarrow.parquet as pq
+        rows = pq.read_table(glob.glob(os.path.join(wd, "s8_package", "dataset", "parquet", "*.parquet"))[0]) \
+            .column("audio").to_pylist()
+        assert rows[0]["bytes"][:4] == b"RIFF"
+        # lần sau chỉ gói phần mới, wav cũ đã mất không sao
+        self._add_s7(wd, ["f3_a"])
+        st = package_incremental(self.CFG, wd, cleanup=True, drop_wav=True)
+        assert st["new"] == 1 and st["dropped"] == 1
+
+    def test_drop_wav_requires_parquet(self, tmp_path):
+        import copy
+        from pipeline.stages.s8_package import package_incremental
+        cfg = copy.deepcopy(self.CFG)
+        cfg["package"]["parquet"]["enabled"] = False
+        with pytest.raises(SystemExit, match="drop-wav"):
+            package_incremental(cfg, str(tmp_path), drop_wav=True)

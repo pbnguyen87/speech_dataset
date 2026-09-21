@@ -1,5 +1,6 @@
 """CLI: python -m pipeline run   --raw-dir ./raw --workdir ./work [--stages s0-s8]   # tuần tự theo lô
      python -m pipeline serve --raw-dir ./raw --workdir ./work [--input-done]      # 8 stage song song
+     python -m pipeline package --workdir ./work [--cleanup] [--copy] [--dry-run]   # gói phần s7 mới, chạy tay
      python -m pipeline status --workdir ./work
      python -m pipeline cleanup --workdir ./work --raw-dir ./raw [--dry-run]   # dọn đĩa hồi tố
      python -m pipeline repair --workdir ./work [--dry-run]    # bỏ dòng manifest hỏng (đĩa đầy/kill)
@@ -76,6 +77,22 @@ def main(argv=None):
                    help="raw không có thêm file mới (không chờ INPUT_DONE); mặc định chờ crawler tạo <workdir>/INPUT_DONE")
     p.add_argument("--cleanup", action="store_true",
                    help="xóa audio raw + wav trung gian ngay khi stage cuối dùng xong; sau s8 xóa wav tier C")
+    p.add_argument("--no-s8", action="store_true",
+                   help="không chạy s8 khi s7 xong; dataset gói dần bằng `pipeline package` (bắt buộc nếu dùng --drop-wav)")
+
+    p = sub.add_parser("package", help="gói thêm segment s7 chưa có trong manifest s8 vào dataset đang có "
+                                       "(chạy tay mỗi khi s7 có thêm file; không xây lại từ đầu như --stages s8)")
+    p.add_argument("--config", action="append", default=None)
+    p.add_argument("--workdir", required=True)
+    p.add_argument("--cleanup", action="store_true", help="xóa wav s7 của segment tier C vừa gán")
+    p.add_argument("--copy", action="store_true", help="copy wav vào dataset thay vì hardlink (mặc định hardlink, "
+                                                       "khác filesystem tự copy)")
+    p.add_argument("--chunk", type=int, default=2000, help="segment mỗi lô ghi (mặc định 2000)")
+    p.add_argument("--drop-wav", action="store_true",
+                   help="dataset chỉ giữ parquet: không link wav vào dataset/wav/, xóa wav s7 của segment "
+                        "ngay sau khi lô đã vào parquet + manifest (đĩa chỉ cần dư ~1 lô; wav khôi phục "
+                        "được bằng extract_audio.py --raw)")
+    p.add_argument("--dry-run", action="store_true", help="chỉ đếm và gán tier, không ghi gì")
 
     p = sub.add_parser("status", help="số dòng manifest + cờ DONE của từng stage")
     p.add_argument("--workdir", required=True)
@@ -128,16 +145,22 @@ def main(argv=None):
 
     default_cfg = os.path.join(os.path.dirname(__file__), "..", "config", "default.yaml")
     cfg = load_config(args.config or [default_cfg])
-    if args.device:
+    if getattr(args, "device", None):
         cfg["device"] = args.device
-    if args.raw_dir:
+    if getattr(args, "raw_dir", None):
         cfg["raw_dir"] = args.raw_dir
+
+    if args.cmd == "package":
+        from .stages.s8_package import package_incremental
+        package_incremental(cfg, args.workdir, cleanup=args.cleanup, copy=args.copy,
+                            dry_run=args.dry_run, chunk=args.chunk, drop_wav=args.drop_wav)
+        return
 
     if args.cmd == "serve":
         from .stream import serve
         st = cfg.get("stream", {})
         cfg["stream"] = {**st, "cleanup": bool(st.get("cleanup")) or args.cleanup}
-        sys.exit(serve(cfg, args.workdir, input_done=args.input_done))
+        sys.exit(serve(cfg, args.workdir, input_done=args.input_done, run_final=not args.no_s8))
 
     stages = parse_stages(args.stages)
     if "s0_ingest" in stages and "raw_dir" not in cfg:

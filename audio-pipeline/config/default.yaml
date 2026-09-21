@@ -86,9 +86,9 @@ package:                # s8: gán tier + xuất dataset
       allow_multi_speaker: true
   keep_tiers: null      # null = xuất mọi tier trừ C; hoặc danh sách, vd [A] chỉ xuất tier A
                         # (tier vẫn được gán đầy đủ trong manifest, chỉ lọc lúc xuất dataset)
-  split:                # chia train/val/test THEO SPEAKER để tránh leak
-    val_ratio: 0.02
-    test_ratio: 0.02
+  split:                # chia train/val/test THEO SPEAKER (hash ổn định) để tránh leak giọng
+    val_ratio: 0        # 0/0 = không chia, mọi segment vào train (chia lúc training)
+    test_ratio: 0
     seed: 42
   parquet:
     enabled: true

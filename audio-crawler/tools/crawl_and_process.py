@@ -17,6 +17,7 @@ Cơ chế:
     bỏ qua phần đã làm. `--no-crawl` chỉ xử lý ledger có sẵn, không crawl.
   * `--stream`: thay toàn bộ cơ chế lô bằng `python -m pipeline serve` — 8 stage chạy
     song song, quét thẳng thư mục raw; crawler xong thì script tạo `<workdir>/INPUT_DONE`.
+    `--no-s8` (kèm --stream): serve dừng sau s7, dataset gói dần bằng `pipeline package`.
   * `--cleanup`: tiết kiệm đĩa — sau mỗi lô xóa audio gốc trong raw/ (giữ sidecar
     + ledger) và wav trung gian s0/s1/s2 của lô; sau s8 xóa wav s7 của segment
     tier C. Wav s7 của tier A/B phải giữ vì s8 xây lại dataset từ đó mỗi lần chạy.
@@ -229,7 +230,8 @@ class DiskGuard:
 
 # ------------------------------------------------------------------ chế độ stream
 def run_stream(pipeline_dir: str, raw_dir: str, workdir: str, crawler, configs: list[str],
-               device: str | None, cleanup: bool, guard: "DiskGuard | None" = None) -> int:
+               device: str | None, cleanup: bool, guard: "DiskGuard | None" = None,
+               no_s8: bool = False) -> int:
     """Pipeline serve quét thẳng raw_dir (không cần staging/ledger); crawler xong -> tạo
     <workdir>/INPUT_DONE để s0 biết không còn file mới. Ctrl-C: tắt cả hai, chạy lại là resume."""
     cmd = [pipeline_python(pipeline_dir), "-m", "pipeline", "serve",
@@ -242,6 +244,8 @@ def run_stream(pipeline_dir: str, raw_dir: str, workdir: str, crawler, configs: 
         cmd += ["--device", device]
     if cleanup:
         cmd += ["--cleanup"]
+    if no_s8:
+        cmd += ["--no-s8"]
     if crawler is None:
         cmd += ["--input-done"]
     serve = subprocess.Popen(cmd, cwd=pipeline_dir)
@@ -295,6 +299,9 @@ def main(argv=None):
                     help="crawler chạy lại khi raw/ giảm xuống dưới N GB (mặc định 5)")
     ap.add_argument("--min-free-gb", type=float, default=0.0,
                     help="thêm điều kiện: đĩa chứa --out trống dưới N GB cũng tạm dừng; 0 = bỏ qua (mặc định)")
+    ap.add_argument("--no-s8", action="store_true",
+                    help="(--stream) không chạy s8 khi s7 xong; gói dần bằng `python -m pipeline package` "
+                         "(bắt buộc nếu gói với --drop-wav)")
     ap.add_argument("--stream", action="store_true",
                     help="pipeline chạy 8 stage song song (python -m pipeline serve) thay vì theo lô; "
                          "--batch/--stages/--final-stages/--poll không dùng")
@@ -322,7 +329,7 @@ def main(argv=None):
               "không có thì raw/ không bao giờ giảm và crawler sẽ dừng mãi", flush=True)
     if args.stream:
         sys.exit(run_stream(pipeline_dir, os.path.abspath(args.out), workdir, crawler,
-                            args.pipeline_config, args.device, args.cleanup, guard))
+                            args.pipeline_config, args.device, args.cleanup, guard, args.no_s8))
 
     processed = Processed(workdir)
     tail = LedgerTail(os.path.abspath(args.out))

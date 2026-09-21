@@ -214,7 +214,8 @@ def status_line(workdir: str) -> str:
     return " ".join(parts)
 
 
-def serve(cfg: dict, workdir: str, input_done: bool = False) -> int:
+def serve(cfg: dict, workdir: str, input_done: bool = False, run_final: bool = True) -> int:
+    """run_final=False: không chạy s8 khi s7 xong (dataset gói dần bằng `pipeline package`)."""
     os.makedirs(workdir, exist_ok=True)
     cfg = dict(cfg)
     cfg["stream"] = {**cfg.get("stream", {}), "_active": True}
@@ -285,6 +286,10 @@ def serve(cfg: dict, workdir: str, input_done: bool = False) -> int:
             p.wait()
         if rc:
             return rc
+        if not run_final:
+            print(f"[serve] s0-s7 xong: {status_line(workdir)} — bỏ qua {FINAL} (--no-s8); "
+                  f"gói bằng: python -m pipeline package --workdir {workdir}", flush=True)
+            return 0
         print(f"[serve] s0-s7 xong: {status_line(workdir)} — chạy {FINAL}", flush=True)
         r = subprocess.run([sys.executable, "-m", "pipeline.stage_runner", FINAL, cfg_path, workdir, "-"])
         if r.returncode != 0:

@@ -133,6 +133,8 @@ python tools/crawl_and_process.py --config config/sources.yaml --out ./raw \
   script tạo `<workdir>/INPUT_DONE`; bị kill thì chạy lại lệnh cũ là tiếp tục
   (dấu "đã làm" là dòng manifest của từng stage). `--batch/--stages/--poll`
   không dùng trong chế độ này. Xem README của audio-pipeline, mục "Chế độ stream".
+- `--no-s8` (kèm `--stream`): serve dừng sau s7, không xây lại dataset; gói dần bằng
+  `python -m pipeline package` và đẩy Hugging Face theo `docs/RUN_GPU.md` mục 11.
 - `--max-raw-gb 20` / `--resume-raw-gb 5` (cả hai chế độ): `raw/` vượt 20 GB thì
   script tạo `<out>/PAUSE`, crawler ngừng tải trước tập kế tiếp (in `[tạm dừng]`);
   pipeline vẫn chạy, s0 xóa raw đã chuyển đổi (cần `--cleanup`), giảm dưới 5 GB thì
