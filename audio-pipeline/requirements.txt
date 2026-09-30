@@ -16,6 +16,7 @@ torchaudio<2.9   # 2.9+ bỏ torchaudio.save (đòi torchcodec) -> demucs 4.0.1 
 silero-vad
 demucs==4.0.1   # bản mới hơn kéo theo sphn (cần Rust toolchain để build)
 faster-whisper
+av<16           # PyAV 16+ bỏ tham số metadata_errors mà faster-whisper 1.2.1 vẫn gọi -> TypeError ở decode_audio
 transformers
 speechbrain
 # tùy chọn nhưng khuyến nghị:

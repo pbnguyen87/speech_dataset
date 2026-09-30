@@ -256,6 +256,8 @@ Ví dụ dưới đây: máy cũ `$OUT=/data/vi_podcast`, máy mới `$OUT_MỚI
 | `torch.cuda.is_available()` = False | cài lại torch đúng CUDA index-url; kiểm tra `nvidia-smi` |
 | `[s5] ... OOM, giảm batch_size -> N` lặp lại mỗi lô | đặt `transcribe.primary.batch_size` / `transcribe.verify.batch_size` = N trong config pipeline (16 GB: 32/32; 24 GB: 64/48) |
 | `TorchCodec is required for save_with_torchcodec` (demucs, s1) | torchaudio >= 2.9; cài lại đúng mục 2: `torch==2.8.0 torchaudio==2.8.0` |
+| `TypeError: open() got an unexpected keyword argument 'metadata_errors'` (s5, faster-whisper) | PyAV >= 16 bỏ tham số này; `pip install --only-binary=:all: "av<16"` trong venv audio-pipeline (đã ghim trong requirements.txt) |
+| `Repository Not Found ... OAuth token has expired` khi tải model | biến `HF_TOKEN` trong shell là token OAuth hết hạn: `unset HF_TOKEN` rồi `hf auth login` bằng access token `hf_...` (Write) tạo tại huggingface.co/settings/tokens |
 | `demucs lỗi (mã -9)` | OOM killer hết RAM hệ thống (`dmesg -T \| grep -i killed`): demucs nạp cả khúc vào RAM, ~10 GB cho khúc 2 giờ; hạ `separate.chunk_seconds` (vd 1800) trong config pipeline |
 | `CalledProcessError ... ffmpeg ... exit status 228` | ENOSPC, hết đĩa: `df -h /tmp $OUT`. File tạm của s1 nằm ở `$OUT/work/_tmp` (không dùng /tmp); đĩa $OUT đầy thì `python -m pipeline cleanup` (mục 8) rồi chạy lại với `--cleanup` |
 | `[đĩa] ... tạm dừng crawler` hoặc `[stream] s0_ingest/s2_segment tạm dừng` kéo dài | raw/, s0 audio hoặc s2 audio vượt 20 GB và stage sau chưa tiêu kịp: bình thường nếu s5 là nút thắt; bất thường nếu thiếu `--cleanup` (thư mục không bao giờ giảm) |
