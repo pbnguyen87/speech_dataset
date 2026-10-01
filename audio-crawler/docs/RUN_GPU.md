@@ -117,7 +117,7 @@ Tham số:
 | `--stream` | pipeline chạy 8 stage song song (`python -m pipeline serve`), model nạp một lần, GPU không nghỉ; bị kill chạy lại là tiếp (xem bên dưới) |
 | `--cleanup` | xóa audio gốc ngay khi s0 xong, wav trung gian ngay khi stage cuối dùng xong; sau s8 xóa wav tier C |
 | `--no-s8` | không chạy s8 khi s7 xong; dataset được gói dần bằng `python -m pipeline package` (mục 11). **Bắt buộc** nếu gói với `--drop-wav` |
-| `--max-raw-gb 20` / `--resume-raw-gb 5` | `raw/` (audio chưa qua s0) vượt 20 GB thì tạo `$OUT/raw/PAUSE`, crawler ngừng tải trước tập kế; s0 xử lý và xóa dần (cần `--cleanup`), giảm dưới 5 GB thì crawler chạy tiếp. `--max-raw-gb 0` = tắt |
+| `--max-raw-gb 10` / `--resume-raw-gb 5` | `raw/` (audio chưa qua s0) vượt 10 GB thì tạo `$OUT/raw/PAUSE`, crawler ngừng tải trước tập kế; s0 xử lý và xóa dần (cần `--cleanup`), giảm dưới 5 GB thì crawler chạy tiếp. `--max-raw-gb 0` = tắt |
 | `--min-free-gb N` | tùy chọn thêm: đĩa chứa `--out` trống dưới N GB cũng dừng crawler; mặc định 0 = bỏ qua |
 | `--source X` | chỉ chạy source tên X |
 | `--limit N` | mỗi source chỉ N item đầu (chạy thử) |
@@ -190,12 +190,12 @@ $OUT/
   (`shuf`).
 - Crawler tải nhanh hơn pipeline xử lý nhiều lần. Dữ liệu đang chờ nằm ở stage nút
   thắt (s5) dưới dạng wav s2, khoảng 170 MB mỗi giờ audio, cộng raw chưa qua s0.
-  Ba chốt chặn cùng ngưỡng 20 GB, chạy lại khi giảm dưới 5 GB: crawler dừng khi
+  Ba chốt chặn cùng ngưỡng 10 GB, chạy lại khi giảm dưới 5 GB: crawler dừng khi
   `raw/` vượt `--max-raw-gb`; s0 dừng khi `work/s0_ingest/audio/` và s2 dừng khi
   `work/s2_segment/audio/` vượt `stream.max_dir_gb` trong config pipeline. Chỉ có tác
   dụng khi có `--cleanup` (s0 xóa raw đã chuyển, s2 xóa wav s0 đã cắt, s7 xóa wav s2
   đã chuẩn âm), không thì thư mục không bao giờ giảm và các tiến trình dừng mãi.
-  s5 chậm thì s2 đầy trước, kéo theo s0 rồi crawler dừng; dữ liệu tạm tối đa ~60 GB. Đĩa đã đầy giữa chừng: dừng, chạy
+  s5 chậm thì s2 đầy trước, kéo theo s0 rồi crawler dừng; dữ liệu tạm tối đa ~30 GB. Đĩa đã đầy giữa chừng: dừng, chạy
   `../audio-pipeline/.venv/bin/python -m pipeline cleanup --workdir $OUT/work --raw-dir $OUT/raw`
   (thêm `--dry-run` để xem trước) rồi chạy lại với `--cleanup`.
 - Đã xóa raw thì không chạy lại được s0-s2 cho file đó (muốn thì xóa dòng
@@ -262,7 +262,7 @@ Ví dụ dưới đây: máy cũ `$OUT=/data/vi_podcast`, máy mới `$OUT_MỚI
 | `Repository Not Found ... OAuth token has expired` khi tải model | biến `HF_TOKEN` trong shell là token OAuth hết hạn: `unset HF_TOKEN` rồi `hf auth login` bằng access token `hf_...` (Write) tạo tại huggingface.co/settings/tokens |
 | `demucs lỗi (mã -9)` | OOM killer hết RAM hệ thống (`dmesg -T \| grep -i killed`): demucs nạp cả khúc vào RAM, ~10 GB cho khúc 2 giờ; hạ `separate.chunk_seconds` (vd 1800) trong config pipeline |
 | `CalledProcessError ... ffmpeg ... exit status 228` | ENOSPC, hết đĩa: `df -h /tmp $OUT`. File tạm của s1 nằm ở `$OUT/work/_tmp` (không dùng /tmp); đĩa $OUT đầy thì `python -m pipeline cleanup` (mục 8) rồi chạy lại với `--cleanup` |
-| `[đĩa] ... tạm dừng crawler` hoặc `[stream] s0_ingest/s2_segment tạm dừng` kéo dài | raw/, s0 audio hoặc s2 audio vượt 20 GB và stage sau chưa tiêu kịp: bình thường nếu s5 là nút thắt; bất thường nếu thiếu `--cleanup` (thư mục không bao giờ giảm) |
+| `[đĩa] ... tạm dừng crawler` hoặc `[stream] s0_ingest/s2_segment tạm dừng` kéo dài | raw/, s0 audio hoặc s2 audio vượt 10 GB và stage sau chưa tiêu kịp: bình thường nếu s5 là nút thắt; bất thường nếu thiếu `--cleanup` (thư mục không bao giờ giảm) |
 | `json.decoder.JSONDecodeError: Unterminated string` | manifest/ledger có dòng ghi dở (đĩa đầy hoặc kill giữa lúc ghi). Bản hiện tại tự bỏ qua dòng hỏng và làm lại bản ghi đó; dọn hẳn bằng `python -m pipeline repair --workdir $OUT/work` |
 | `demucs lỗi (mã N)` kèm stderr | đọc stderr in ngay sau: thiếu mạng tải model htdemucs, thiếu ffmpeg, hoặc CUDA OOM |
 | `[serve] sN thoát mã ... khởi động lại (k/5)` | stage chết, xem traceback ngay trước dòng đó; hết 5 lần thì serve dừng, sửa rồi chạy lại |

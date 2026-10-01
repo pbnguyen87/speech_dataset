@@ -171,10 +171,10 @@ tiến trình nào rồi chạy lại lệnh cũ là tiếp tục từ chỗ d�
 - s0 nhận file raw khi có sidecar `.json` cùng tên, hoặc mtime cũ hơn `stream.settle_seconds`
   (tránh đọc file đang tải dở).
 - Đĩa: stage trong `stream.disk_guard_stages` (mặc định s0 và s2) ngừng nhận việc khi
-  `<stage>/audio/` của nó vượt `stream.max_dir_gb` (20), chạy lại khi giảm dưới
+  `<stage>/audio/` của nó vượt `stream.max_dir_gb` (10), chạy lại khi giảm dưới
   `stream.resume_dir_gb` (5). s0 giảm nhờ s2 xóa wav của file đã cắt, s2 giảm nhờ s7 xóa
   wav segment đã chuẩn âm (cần cleanup). Chuỗi hãm ngược: s5 chậm -> s2 đầy và dừng ->
-  s0 đầy và dừng -> raw đầy và crawler dừng; dữ liệu tạm bị chặn ở ~3 x 20 GB.
+  s0 đầy và dừng -> raw đầy và crawler dừng; dữ liệu tạm bị chặn ở ~3 x 10 GB.
   `stream.min_free_gb` thêm điều kiện đĩa trống (0 = bỏ). Đã đầy giữa chừng:
   `python -m pipeline cleanup`.
 

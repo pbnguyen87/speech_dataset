@@ -134,7 +134,7 @@ def stage_loop(stage: str, cfg: dict, workdir: str) -> None:
     guard = None
     st = cfg["stream"]
     if stage in st.get("disk_guard_stages", ["s0_ingest", "s2_segment"]):
-        guard = DiskGuard(workdir, stage, float(st.get("max_dir_gb", 20)), float(st.get("resume_dir_gb", 5)),
+        guard = DiskGuard(workdir, stage, float(st.get("max_dir_gb", 10)), float(st.get("resume_dir_gb", 5)),
                           float(st.get("min_free_gb", 0)))
         if guard.max_b > 0 and not st.get("cleanup"):
             print(f"[stream] {stage} CẢNH BÁO: max_dir_gb chỉ có ý nghĩa khi cleanup bật "

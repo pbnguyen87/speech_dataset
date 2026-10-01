@@ -293,8 +293,8 @@ def main(argv=None):
     ap.add_argument("--poll", type=float, default=3.0, help="giây giữa 2 lần đọc ledger")
     ap.add_argument("--cleanup", action="store_true",
                     help="xóa audio gốc + wav trung gian sau khi xử lý; sau s8 xóa wav tier C (giữ tier A/B)")
-    ap.add_argument("--max-raw-gb", type=float, default=20.0,
-                    help="raw/ (audio chưa qua s0) vượt N GB thì tạm dừng crawler (tạo <out>/PAUSE); 0 = tắt (mặc định 20)")
+    ap.add_argument("--max-raw-gb", type=float, default=10.0,
+                    help="raw/ (audio chưa qua s0) vượt N GB thì tạm dừng crawler (tạo <out>/PAUSE); 0 = tắt (mặc định 10)")
     ap.add_argument("--resume-raw-gb", type=float, default=5.0,
                     help="crawler chạy lại khi raw/ giảm xuống dưới N GB (mặc định 5)")
     ap.add_argument("--min-free-gb", type=float, default=0.0,
