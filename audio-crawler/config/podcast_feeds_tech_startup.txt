@@ -1,0 +1,53 @@
+# Podcast tiếng Việt phỏng vấn / trò chuyện về công nghệ, startup, kinh doanh, marketing.
+# Lọc tay từ podcast_feeds_10h.csv và podcast_feeds_2h.csv ngày 24/9/2026; nhiều tiếng Anh xen (code-switching).
+# 17 kênh, tổng 1384 giờ, sắp theo số giờ giảm dần. Mỗi dòng một RSS feed;
+# dùng trong sources.yaml: urls_file: podcast_feeds_tech_startup.txt
+# Lưu ý: phần lớn là phỏng vấn nhiều người nói -> bật speaker.backend pyannote ở s4; có intro nhạc -> separate.mode auto.
+#
+# giờ | tập | kênh | đơn vị
+#   330.6 |   255 | Have A Sip | Vietcetera
+https://anchor.fm/s/103273a04/podcast/rss
+#   227.0 |   216 | The Quoc Khanh Show | VIETSUCCESS
+https://anchor.fm/s/1081bb15c/podcast/rss
+#   179.2 |   213 | Business Insights | VIETSUCCESS
+https://anchor.fm/s/e828cf38/podcast/rss
+#   120.0 |   167 | Vietnam Innovators (Tiếng Việt) | Vietcetera
+https://anchor.fm/s/103279b48/podcast/rss
+#   113.2 |   273 | Bít Tất | Vietcetera
+https://anchor.fm/s/103667ee4/podcast/rss
+#   105.2 |   423 | Cà Phê Khởi Nghiệp Cùng Tùng Bê Tê - Không kịch bản | Tung BT
+https://rss.buzzsprout.com/1712557.rss
+#    83.6 |   253 | Doanh Nhân Kể | Doanh Nhân Kể
+https://anchor.fm/s/d0472ef0/podcast/rss
+#    54.3 |   179 | HIEU.TV | Hieu Nguyen
+https://anchor.fm/s/4cfb55bc/podcast/rss
+#    27.2 |    43 | M.A.D. | Vietcetera, The Lab Saigon
+https://anchor.fm/s/103661634/podcast/rss
+#    24.4 |    25 | Marketing Insider | Duc Nguyen
+https://anchor.fm/s/d0a368b4/podcast/rss
+#    23.6 |    36 | The Money Date | Vietcetera
+https://anchor.fm/s/1035bc274/podcast/rss
+#    20.7 |    69 | Trang In Tech | Trang Nguyen (Tracy)
+https://anchor.fm/s/c084cc98/podcast/rss
+#    16.5 |    41 | DataZen Labs | Dobby
+https://anchor.fm/s/ec55863c/podcast/rss
+#    16.1 |    18 | Vietnam Marketing | Vietsuccess
+https://anchor.fm/s/e828c128/podcast/rss
+#    15.3 |    15 | YOUNG MARKETERS PODCAST | Marketing Fundamentals. Vietnam Stories. Young Marketers.
+https://anchor.fm/s/86f885b4/podcast/rss
+#    14.6 |    18 | Blue Ventures Series - Khởi Nghiệp Thành Công | VIETSUCCESS
+https://anchor.fm/s/bfb5d30c/podcast/rss
+#    12.2 |    49 | Dòng Chảy Công Nghệ | ACDT
+https://raw.githubusercontent.com/techukr/podcastRSS-vi/main/rss.xml
+
+# --- Tùy chọn: nội dung công nghệ / kinh doanh nhưng là độc thoại hoặc đọc bài, bỏ dấu # để dùng ---
+#   418.9 |  1362 | Spiderum Official | Spiderum
+# https://anchor.fm/s/13c13550/podcast/rss
+#   164.5 |   700 | VOV - Khoa học Công nghệ | Đài Tiếng nói Việt Nam
+# https://anchor.fm/s/89fc894/podcast/rss
+#   114.1 |   289 | Thầy Duy Khởi Nghiệp | Nguyen Thai Duy
+# https://anchor.fm/s/dadb62f0/podcast/rss
+#    63.5 |    72 | Cởi Mở | Vietcetera
+# https://anchor.fm/s/1033523bc/podcast/rss
+#    44.6 |    41 | EduStation | Vietcetera
+# https://anchor.fm/s/1035de3c4/podcast/rss

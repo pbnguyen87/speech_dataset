@@ -1,0 +1,13 @@
+# Crawl nhóm podcast phỏng vấn công nghệ / startup / kinh doanh (17 kênh, ~1384 giờ) trong
+# podcast_feeds_tech_startup.txt. Nhiều tiếng Anh xen kẽ, phù hợp làm dữ liệu code-switching.
+# Chạy:  python tools/crawl_and_process.py --config config/vi_podcast_tech.yaml \
+#            --out /Users/binhnguyen8/Downloads/study/speech_dataset/vi_podcast_tech/raw \
+#            --workdir /Users/binhnguyen8/Downloads/study/speech_dataset/vi_podcast_tech/work --batch 20
+# Thử trước: python -m crawler run --config config/vi_podcast_tech.yaml --out ./raw_test --limit 3
+sources:
+  - name: vi-podcast-tech
+    type: rss
+    dir: .                                      # ghi thẳng raw/<feed>/...
+    urls_file: podcast_feeds_tech_startup.txt   # tương đối theo thư mục config/; dòng '#' bị bỏ qua
+    max_hours: 4                                # tập phỏng vấn thường 0.5-2h; cắt ở 4h để tránh tập gộp
+    delay_s: 1.0
