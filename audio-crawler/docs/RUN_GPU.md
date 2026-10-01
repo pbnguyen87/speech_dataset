@@ -104,7 +104,7 @@ echo $! > $OUT/run.pid
 
 Không truyền `--pipeline-config` để dùng `config/default.yaml` của pipeline
 (Whisper large-v3 + PhoWhisper-large, `transcribe.primary.batch_size` và
-`transcribe.verify.batch_size` mặc định 4 — A100 40 GB dùng chung VRAM với demucs, ECAPA và
+`transcribe.verify.batch_size` mặc định 8 — A100 40 GB dùng chung VRAM với demucs, ECAPA và
 PhoWhisper thường trú; hết VRAM thì s5 tự giảm một nửa và in `OOM, giảm batch_size`, khi đó
 đặt hẳn giá trị đó vào config để khỏi thử lại mỗi lô; muốn thử batch lớn hơn thì ghi đè bằng
 file yaml riêng qua `--pipeline-config`).
@@ -256,7 +256,7 @@ Ví dụ dưới đây: máy cũ `$OUT=/data/vi_podcast`, máy mới `$OUT_MỚI
 | Hiện tượng | Xử lý |
 |---|---|
 | `torch.cuda.is_available()` = False | cài lại torch đúng CUDA index-url; kiểm tra `nvidia-smi` |
-| `[s5] ... OOM, giảm batch_size -> N` lặp lại mỗi lô | đặt `transcribe.primary.batch_size` / `transcribe.verify.batch_size` = N trong config pipeline (mặc định 4; A100 40 GB chạy đủ demucs + ECAPA + hai model Whisper thì 4–8 là an toàn) |
+| `[s5] ... OOM, giảm batch_size -> N` lặp lại mỗi lô | đặt `transcribe.primary.batch_size` / `transcribe.verify.batch_size` = N trong config pipeline (mặc định 8; A100 40 GB chạy đủ demucs + ECAPA + hai model Whisper thì 8 dùng ~19 GB VRAM) |
 | `TorchCodec is required for save_with_torchcodec` (demucs, s1) | torchaudio >= 2.9; cài lại đúng mục 2: `torch==2.8.0 torchaudio==2.8.0` |
 | `TypeError: open() got an unexpected keyword argument 'metadata_errors'` (s5, faster-whisper) | PyAV >= 16 bỏ tham số này; `pip install --only-binary=:all: "av<16"` trong venv audio-pipeline (đã ghim trong requirements.txt) |
 | `Repository Not Found ... OAuth token has expired` khi tải model | biến `HF_TOKEN` trong shell là token OAuth hết hạn: `unset HF_TOKEN` rồi `hf auth login` bằng access token `hf_...` (Write) tạo tại huggingface.co/settings/tokens |
