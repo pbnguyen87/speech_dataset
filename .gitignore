@@ -6,6 +6,7 @@ __pycache__/
 
 # dữ liệu: audio tải về, workdir pipeline, dataset tải từ HF — không đưa lên repo
 vi_podcast/
+vi_podcast_tech/
 data/
 raw/
 raw_*/
