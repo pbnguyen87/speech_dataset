@@ -196,6 +196,12 @@ class TestVerifyBatched:
         out = transcribe_batched(asr, {f"s{i}": f"p{i}" for i in range(4)}, 8)
         assert calls == [4, 2, 2] and len(out) == 4
 
+    def test_alloc_conf_set_before_torch_and_release_is_safe(self):
+        import os
+        from pipeline.stages import s5_verify_worker as w
+        assert os.environ.get("PYTORCH_CUDA_ALLOC_CONF") == "expandable_segments:True"
+        w.release_cuda_cache()  # không có CUDA (máy CPU) cũng không được ném lỗi
+
     def test_bad_file_only_loses_itself(self):
         from pipeline.stages.s5_verify_worker import transcribe_batched
         asr, _ = self._asr(fail_on="p1")

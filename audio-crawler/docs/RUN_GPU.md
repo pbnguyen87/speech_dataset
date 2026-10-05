@@ -104,8 +104,9 @@ echo $! > $OUT/run.pid
 
 Không truyền `--pipeline-config` để dùng `config/default.yaml` của pipeline
 (Whisper large-v3 + PhoWhisper-large, `transcribe.primary.batch_size` và
-`transcribe.verify.batch_size` mặc định 16 / 8 — đo trên A100 40 GB: faster-whisper ~5.5 GB, PhoWhisper
-~18 GB ở batch 8 (gấp đôi ở 16), demucs thêm 3–8 GB khi tách nhạc, nên verify giữ 8; hết VRAM thì s5 tự giảm một nửa và in `OOM, giảm batch_size`, khi đó
+`transcribe.verify.batch_size` mặc định 16 / 2 — đo trên A100 40 GB: faster-whisper ~5.5 GB, PhoWhisper
+~18 GB ở batch 8 và ~6-7 GB ở batch 2 (pad 30 s mỗi segment, PyTorch giữ bộ nhớ reserved), demucs thêm
+3–8 GB khi tách nhạc; GPU dùng chung với tiến trình khác thì thêm `--pipeline-config config/a100_shared.yaml`; hết VRAM thì s5 tự giảm một nửa và in `OOM, giảm batch_size`, khi đó
 đặt hẳn giá trị đó vào config để khỏi thử lại mỗi lô; muốn thử batch lớn hơn thì ghi đè bằng
 file yaml riêng qua `--pipeline-config`).
 
@@ -256,7 +257,7 @@ Ví dụ dưới đây: máy cũ `$OUT=/data/vi_podcast`, máy mới `$OUT_MỚI
 | Hiện tượng | Xử lý |
 |---|---|
 | `torch.cuda.is_available()` = False | cài lại torch đúng CUDA index-url; kiểm tra `nvidia-smi` |
-| `[s5] ... OOM, giảm batch_size -> N` lặp lại mỗi lô | đặt `transcribe.primary.batch_size` / `transcribe.verify.batch_size` = N trong config pipeline (mặc định primary 16 / verify 8; PhoWhisper là phần tốn VRAM, ~18 GB ở batch 8, nên giảm verify trước) |
+| `[s5] ... OOM, giảm batch_size -> N` lặp lại mỗi lô | đặt `transcribe.primary.batch_size` / `transcribe.verify.batch_size` = N trong config pipeline (mặc định primary 16 / verify 2; PhoWhisper là phần tốn VRAM, ~18 GB ở batch 8, nên giảm verify trước) |
 | `TorchCodec is required for save_with_torchcodec` (demucs, s1) | torchaudio >= 2.9; cài lại đúng mục 2: `torch==2.8.0 torchaudio==2.8.0` |
 | `TypeError: open() got an unexpected keyword argument 'metadata_errors'` (s5, faster-whisper) | PyAV >= 16 bỏ tham số này; `pip install --only-binary=:all: "av<16"` trong venv audio-pipeline (đã ghim trong requirements.txt) |
 | `Repository Not Found ... OAuth token has expired` khi tải model | biến `HF_TOKEN` trong shell là token OAuth hết hạn: `unset HF_TOKEN` rồi `hf auth login` bằng access token `hf_...` (Write) tạo tại huggingface.co/settings/tokens |

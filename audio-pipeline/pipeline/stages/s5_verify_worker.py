@@ -19,6 +19,9 @@ import sys
 
 os.environ.setdefault("HF_HUB_DISABLE_PROGRESS_BARS", "1")
 os.environ.setdefault("TRANSFORMERS_VERBOSITY", "error")
+# Phải đặt TRƯỚC khi import torch: allocator cấp phát theo đoạn mở rộng được, giảm phân mảnh ->
+# bộ nhớ "reserved" của PhoWhisper không phình gấp 3-4 lần lượng thật dùng (đo A100: 14-18 GB ở batch 8).
+os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
 
 
 def _is_oom(e: Exception) -> bool:
@@ -75,6 +78,16 @@ def _handle(asr, in_path: str, out_path: str, batch_size: int) -> None:
         json.dump(out, f, ensure_ascii=False)
 
 
+def release_cuda_cache() -> None:
+    """Trả block GPU rảnh về driver sau mỗi chunk để các stage khác (s1/s4/primary) dùng được."""
+    try:
+        import torch
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+    except Exception:
+        pass
+
+
 def serve(model_name: str, device: str) -> None:
     asr = load_asr(model_name, device)
     print("ready", flush=True)
@@ -85,6 +98,7 @@ def serve(model_name: str, device: str) -> None:
         try:
             req = json.loads(line)
             _handle(asr, req["in"], req["out"], int(req.get("batch_size", 1)))
+            release_cuda_cache()
             print("ok", flush=True)
         except Exception as e:
             print(f"err {str(e)[-300:]}".replace("\n", " "), flush=True)

@@ -56,7 +56,7 @@ transcribe:             # s5: bước tốn nhất
   verify:
     enabled: true
     model: vinai/PhoWhisper-large
-    batch_size: 8       # segment mỗi lần forward của PhoWhisper; hết VRAM worker tự giảm một nửa. Tốn nhất: ~18 GB VRAM ở 8, ~32 GB ở 16 (pad 30s mỗi segment)
+    batch_size: 2       # segment mỗi lần forward của PhoWhisper; hết VRAM worker tự giảm một nửa. Tốn nhất: ~6-7 GB ở 2, ~18 GB ở 8 (pad 30s mỗi segment)
 
 textnorm:               # s6
   backend: auto         # vinorm | basic | auto (vinorm nếu cài được, fallback basic)
