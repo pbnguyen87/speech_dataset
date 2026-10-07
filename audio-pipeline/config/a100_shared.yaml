@@ -2,7 +2,7 @@
 # pipeline chỉ còn ~26 GB. Đỉnh ước tính của profile này ~13 GB (verify 2: ~6.5 GB, primary 8: ~5 GB,
 # ECAPA ~1 GB) + 3-8 GB khi demucs tách nhạc = tối đa ~21 GB. Dùng:
 #   crawl_and_process.py ... --pipeline-config ../audio-pipeline/config/a100_shared.yaml
-# GPU rảnh trở lại thì bỏ cờ này để quay về default (primary 16 / verify 2).
+# GPU rảnh trở lại thì bỏ cờ này để quay về default (primary 16 / verify 4).
 # Giữ separate: auto — đo trên 184 file podcast phỏng vấn, 34% có nhạc nền (music_ratio >= 0.10).
 transcribe:
   primary:
